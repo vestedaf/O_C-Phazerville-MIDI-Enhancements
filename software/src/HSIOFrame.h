@@ -76,11 +76,11 @@ struct MIDIMapSettings {
   enum Type : uint8_t {
     NONE = 0,
     PITCH = (1 << 5),
-    GATE  = (2 << 5),
+    DRUM   = (2 << 5),
     TRIGGER = (3 << 5),
     MODULATOR = (4 << 5),
     CCONTROL = (5 << 5),
-    RESERVED0 = (6 << 5),
+    PIPE = (6 << 5),
 
     TYPE_MASK = (7 << 5),
   };
@@ -133,22 +133,48 @@ struct MIDIMapSettings {
     switch (t) {
       case NONE: return 1;
       case PITCH: return PITCH_TYPE_COUNT;
-      case GATE: return GATE_TYPE_COUNT;
+      case DRUM: return 1;
       case TRIGGER: return TRIG_TYPE_COUNT;
       case MODULATOR: return MOD_TYPE_COUNT;
       case CCONTROL: return 128;
+      case PIPE: return 32; // IN-map slots 0-31
       default: break;
     }
     return 0;
   }
 
-  int8_t function_cc = 0; // CC#, or index of other subtypes
-  uint8_t function = NONE; // which type of message
-  uint8_t channel = 0; // MIDI channel number
-  uint8_t dac_polyvoice = 0; // select which voice to send from output
-  int8_t transpose = 0;
-  uint8_t range_low = 0, range_high = 127;
+  int8_t function_cc; // CC#, or index of other subtypes. Max 127; CC# mode uses subtype 5-127 = CC# 0-122 */
+  uint8_t function; // which type of message
+  uint8_t channel; // MIDI channel number
+  uint8_t dac_polyvoice; // select which voice to send from output
+  int8_t transpose;
+  uint8_t range_low, range_high;
+  int8_t gate_source; // DAC index for gate input (-1 = none, use CV change detection)
 };
+
+// GM Drum note table for output maps — index into this table via subtype field
+// GM drum notes 36-51 in ascending order (16 entries)
+// Covers the standard drum machine range: Bitbox, TR8S, etc.
+static const uint8_t drum_note_table[] = {
+  36, // C2  - Bass Drum 1
+  37, // C#2 - Side Stick
+  38, // D2  - Snare Drum 1
+  39, // D#2 - Hand Clap
+  40, // E2  - Snare Drum 2 (rim)
+  41, // F2  - Low Floor Tom
+  42, // F#2 - Closed Hi-Hat
+  43, // G2  - High Floor Tom
+  44, // G#2 - Pedal Hi-Hat
+  45, // A2  - Low Tom
+  46, // A#2 - Open Hi-Hat
+  47, // B2  - Mid Tom
+  48, // C3  - Crash Cymbal 1
+  49, // C#3 - High Tom
+  50, // D3  - Ride Cymbal 1
+  51, // D#3 - Ride Bell
+};
+static constexpr int DRUM_NOTE_COUNT = sizeof(drum_note_table);
+
 struct MIDIMapping : protected MIDIMapSettings {
   MIDIMapping() {}
   ~MIDIMapping() {}
@@ -184,6 +210,40 @@ struct MIDIMapping : protected MIDIMapSettings {
   const uint8_t get_high() const {
     return range_high;
   }
+  const int8_t get_gate_source() const {
+    return gate_source;
+  }
+  // Get display name for any output index (0-31)
+  // Physical DACs: A-D (T40) or A-H (T41) — these overlap with virtual outputs
+  // Virtual-only (beyond physical DAC count): CA, CB, GA, GB, ALA, ALB, ARA, ARB
+  const char* GetOutputName(uint8_t idx) const {
+    static char name[4] = {0, ' ', ' ', 0};
+    if (idx < DAC_CHANNEL_COUNT) {
+      // Physical DAC: A, B, C, D, E, F, G, H
+      name[0] = 'A' + idx;
+      name[1] = ' ';
+      name[2] = ' ';
+    } else {
+      // Virtual output beyond physical DAC range
+      // Mapping: io_offset = hemisphere * 2, so hemisphere = idx / 2, output = idx % 2
+      uint8_t hemi = idx / 2;
+      uint8_t out = idx % 2;
+      switch (hemi) {
+        case 0: name[0] = 'L'; break; // Left
+        case 1: name[0] = 'R'; break; // Right
+        case 2: name[0] = '2'; break; // Left2 (T41)
+        case 3: name[0] = '3'; break; // Right2 (T41)
+        case 4: name[0] = 'C'; break; // Clock
+        case 5: name[0] = 'G'; break; // Global
+        case 6: name[0] = 'A'; break; // Audio L
+        case 7: name[0] = 'B'; break; // Audio R
+        default: name[0] = '?'; break;
+      }
+      name[1] = out ? 'B' : 'A';
+      name[2] = ' ';
+    }
+    return name;
+  }
   const bool enabled() const {
     return get_type() != NONE;
   }
@@ -192,8 +252,12 @@ struct MIDIMapping : protected MIDIMapSettings {
   }
 
   const char * const get_label() const {
-    if (get_type() == CCONTROL) return "CC#"; // special case for "CC#-1" auto-learn
     if (get_subtype() < 0) return "(learn)";
+    return get_out_label();
+  }
+  // Out-map version: never shows "(learn)" — returns "None" for invalid subtypes
+  const char * const get_out_label() const {
+    if (get_subtype() < 0 || get_type() == NONE) return "None";
 
     switch (get_type()) {
       case NONE: return "None";
@@ -208,16 +272,8 @@ struct MIDIMapping : protected MIDIMapSettings {
           default: break;
         }
         break;
-      case GATE:
-        switch (GateType(get_subtype())) {
-          case GATE_MONO:   return "Gate";
-          case GATE_POLY:   return "PolyG";
-          case GATE_RETRIG: return "GateRT";
-          case GATE_INVERT: return "InvGate";
-          case GATE_RUN:    return "RunGate";
-          case GATE_RESET:  return "Reset";
-          default: break;
-        }
+      case DRUM:
+        return "Drum";
         break;
       case TRIGGER:
         switch (TrigType(get_subtype())) {
@@ -235,15 +291,30 @@ struct MIDIMapping : protected MIDIMapSettings {
         }
         break;
       case MODULATOR:
-        switch (ModType(get_subtype())) {
-          case MOD_VEL_MONO: return "Veloc";
-          case MOD_VEL_POLY: return "PolyV";
-          case MOD_AT_CHAN:  return "ChnAft";
-          case MOD_AT_POLY:  return "KeyAft";
-          case MOD_BEND:     return "Bend";
-          default: break;
+        if (get_subtype() <= MOD_BEND) {
+          switch (ModType(get_subtype())) {
+            case MOD_VEL_MONO: return "Veloc";
+            case MOD_VEL_POLY: return "PolyV";
+            case MOD_AT_CHAN:  return "ChnAft";
+            case MOD_AT_POLY:  return "KeyAft";
+            case MOD_BEND:     return "Bend";
+            default: break;
+          }
+        } else {
+          // CC# mode: subtype 5-127 = CC# 0-122
+          static char cc_label[8];
+          uint8_t cc_num = get_subtype() - (MOD_BEND + 1);
+          snprintf(cc_label, sizeof(cc_label), "CC#%d", cc_num);
+          return cc_label;
         }
         break;
+      case CCONTROL:
+        // Legacy in-map type: show CC# number
+        static char cc_label2[8];
+        snprintf(cc_label2, sizeof(cc_label2), "CC#%d", get_subtype());
+        return cc_label2;
+      case PIPE:
+        return "Map";
       default: break;
     }
     return "???";
@@ -253,8 +324,10 @@ struct MIDIMapping : protected MIDIMapSettings {
   void Init() {
     function = NONE;
     function_cc = 0;
+    channel = 0;
     dac_polyvoice = 0;
     transpose = 0;
+    gate_source = 0;
     output = 0;
     pitch_bend = 0;
     range_low = 0;
@@ -269,9 +342,16 @@ struct MIDIMapping : protected MIDIMapSettings {
     function = TRIGGER;
     function_cc = constrain(subtype, -1, subtype_count(TRIGGER));
   }
-  void SetGate(int8_t subtype) {
-    function = GATE;
-    function_cc = constrain(subtype, -1, subtype_count(GATE));
+  void SetDrum() {
+    function = DRUM;
+    function_cc = 0; // default: first entry in drum_note_table (Bass Drum)
+  }
+  void SetDrumNote(int8_t index) {
+    function_cc = constrain(index, 0, DRUM_NOTE_COUNT - 1);
+  }
+  // Get the actual MIDI note number for the current drum map
+  uint8_t GetDrumNote() const {
+    return (get_type() == DRUM) ? drum_note_table[constrain(get_subtype(), 0, DRUM_NOTE_COUNT - 1)] : 0;
   }
   void SetModulator(int8_t subtype) {
     function = MODULATOR;
@@ -288,12 +368,18 @@ struct MIDIMapping : protected MIDIMapSettings {
   void SetTranspose(int8_t tr) {
     transpose = tr;
   }
+  void set_voice(uint8_t v) {
+    dac_polyvoice = v;
+  }
 
   const bool IsPitch() const {
     return get_type() == PITCH;
   }
+  const bool IsDrum() const {
+    return get_type() == DRUM;
+  }
   const bool IsGate() const {
-    return get_type() == GATE;
+    return get_type() == DRUM; // DRUM is the output-side equivalent of GATE
   }
   const bool IsTrigger() const {
     return get_type() == TRIGGER;
@@ -305,11 +391,19 @@ struct MIDIMapping : protected MIDIMapSettings {
     return get_type() == MODULATOR;
   }
   const bool IsCC() const {
-    return get_type() == CCONTROL;
+    return get_type() == CCONTROL || (get_type() == MODULATOR && get_subtype() > MOD_BEND);
+  }
+  const bool IsPipe() const {
+    return get_type() == PIPE;
+  }
+  // Get CC# number for CC-type maps (CCONTROL or MODULATOR in CC# mode)
+  uint8_t GetCCNumber() const {
+    if (get_type() == CCONTROL) return get_subtype();
+    if (get_type() == MODULATOR && get_subtype() > MOD_BEND) return get_subtype() - (MOD_BEND + 1);
+    return 0;
   }
   const bool IsPoly() const {
     return (IsPitch() && get_subtype() == NOTE_POLY)
-      || (IsGate() && get_subtype() == GATE_POLY)
       || (IsMod() && ((get_subtype() == MOD_AT_POLY) || (get_subtype() == MOD_VEL_POLY)));
   }
   constexpr int clock_mod() const {
@@ -338,9 +432,28 @@ struct MIDIMapping : protected MIDIMapSettings {
     channel = constrain(channel + dir, 0, 16); // 16 = omni
   }
 
-  static constexpr Type ordered_types[6] = {
-    NONE, PITCH, GATE, TRIGGER, MODULATOR, CCONTROL
+  static constexpr Type ordered_types[7] = {
+    NONE, PITCH, DRUM, TRIGGER, MODULATOR, CCONTROL, PIPE
   };
+  // Output-only type list: TRIGGER removed, MODULATOR+CCONTROL removed
+  // Available: NONE, PITCH (Note), DRUM, PIPE (Map)
+  static constexpr Type output_types[4] = {
+    NONE, PITCH, DRUM, PIPE
+  };
+
+  // Max output-meaningful subtype index for each type (inclusive)
+  // MODULATOR subtypes: 0-4 = Veloc, PolyV, ChnAft, KeyAft, Bend; 5-127 = CC# 0-122
+  static int8_t output_max_subtype(Type t) {
+    switch (t) {
+      case PITCH:     return NOTE_MONO;    // only Note (no PolyN/LoNote/HiNote/PdlNote/InvNote)
+      case DRUM:      return 0; // position 2 always overflows → type change; position 5 browses drum_note_table
+      case MODULATOR: return MOD_TYPE_COUNT - 1 + 123; // Bend(4) + CC#0-122 = 127 (max int8_t)
+      case CCONTROL:  return 127;          // legacy: all CC numbers (still used by in-maps)
+      case PIPE:      return 31;           // IN-map slots 0-31 (M1-M32)
+      default:        return 0;
+    }
+  }
+
   bool AdjustType(int dir) {
     const int count = sizeof(ordered_types);
     int tidx = 0;
@@ -348,10 +461,15 @@ struct MIDIMapping : protected MIDIMapSettings {
     if (tidx >= count) tidx = 0;
     tidx += (dir>0?1:-1);
     CONSTRAIN(tidx, 0, count - 1);
-    int sidx = constrain(get_subtype(), 0, subtype_count(ordered_types[tidx]) - 1);
 
     Type oldtype = get_type();
-    function = ordered_types[tidx];
+    Type newtype = ordered_types[tidx];
+    // When switching types, use type-appropriate default subtype
+    int sidx = (oldtype != newtype)
+        ? default_subtype(newtype)
+        : constrain(get_subtype(), 0, subtype_count(newtype) - 1);
+
+    function = newtype;
     function_cc = sidx;
     return oldtype != get_type();
   }
@@ -370,9 +488,86 @@ struct MIDIMapping : protected MIDIMapSettings {
     output = 0;
     pitch_bend = 0;
   }
+  // Output-map version: only cycles through output-meaningful subtypes
+  void AdjustFunctionOutput(int dir) {
+    // DRUM: position 2 should change type, not browse drum notes
+    // output_max_subtype(DRUM) == 0, so any dir overflows → AdjustOutputType
+    if (get_type() == DRUM) {
+      if (AdjustOutputType(dir)) return;
+      // If AdjustOutputType didn't change type (shouldn't happen), keep current
+      function_cc = 0;
+      output = 0;
+      pitch_bend = 0;
+      return;
+    }
+    int8_t max_sub = output_max_subtype(get_type());
+    int sidx = get_subtype() + dir;
+    if (sidx < 0) {
+      // Go to previous type, wrap to its max output subtype
+      if (AdjustOutputType(-1)) {
+        // AdjustOutputType already set function_cc to the new type's default
+        return;
+      } else {
+        sidx = max_sub;
+      }
+    } else if (sidx > max_sub) {
+      // Go to next type, start at subtype 0
+      if (AdjustOutputType(1)) {
+        // AdjustOutputType already set function_cc to the new type's default
+        return;
+      } else {
+        sidx = 0;
+      }
+    }
+    CONSTRAIN(sidx, 0, max_sub);
+    // Skip PolyV (subtype 1) for output maps — it requires poly voice data that only exists on input side
+    if (get_type() == MODULATOR && sidx == MOD_VEL_POLY) {
+      sidx = (dir > 0) ? MOD_AT_CHAN : MOD_VEL_MONO;
+    }
+    // CC# mode: subtype 5-127 = CC# 0-122, scrolls naturally after Bend(4)
+    function_cc = sidx;
+    output = 0;
+    pitch_bend = 0;
+  }
+  // Helper: default subtype for a given type (used when creating/switching types)
+  static int8_t default_subtype(Type t) {
+    switch (t) {
+      case DRUM: return 0; // default: first entry in drum_note_table (Bass Drum, MIDI 36)
+      default:   return 0;
+    }
+  }
+
+  // Helper: AdjustType constrained to output-meaningful types
+  // Same top-level types but ensures subtype is valid for output
+  bool AdjustOutputType(int dir) {
+    const int count = sizeof(output_types);
+    int tidx = 0;
+    while (get_type() != output_types[tidx] && tidx < count) ++tidx;
+    if (tidx >= count) tidx = 0;
+    tidx += (dir>0?1:-1);
+    CONSTRAIN(tidx, 0, count - 1);
+
+    Type oldtype = get_type();
+    Type newtype = output_types[tidx];
+    // When switching types, use type-appropriate default subtype
+    int sidx = (oldtype != newtype)
+        ? default_subtype(newtype)
+        : constrain(get_subtype(), 0, output_max_subtype(newtype));
+
+    function = newtype;
+    function_cc = sidx;
+    return oldtype != get_type();
+  }
 
   void AdjustVoice(int dir) {
-    dac_polyvoice = constrain(dac_polyvoice + dir, 0, DAC_CHANNEL_COUNT - 1);
+    if (IsPipe()) {
+      dac_polyvoice = constrain(dac_polyvoice + dir, 0, 31); // IN-map slots 0-31 (displayed as M1-M32)
+    } else {
+      dac_polyvoice = constrain(dac_polyvoice + dir, 0, IO_CHANNEL_COUNT - 1);
+    }
+  }
+  void AdjustGateSource(int dir) {
+    gate_source = constrain(gate_source + dir, 0, IO_CHANNEL_COUNT - 1);
   }
 
   void AutoLearn() {
@@ -391,10 +586,11 @@ struct MIDIMapping : protected MIDIMapSettings {
     range_high = constrain(range_high + dir, range_low, 127);
   }
   uint64_t Pack() const {
-    return PackPackables(function_cc, function, channel, dac_polyvoice, transpose, range_low, range_high);
+    return PackPackables(function_cc, function, channel, dac_polyvoice, transpose, range_low, range_high, gate_source);
   }
   void Unpack(uint64_t data) {
-    UnpackPackables(data, function_cc, function, channel, dac_polyvoice, transpose, range_low, range_high);
+    gate_source = 0; // default: DAC1
+    UnpackPackables(data, function_cc, function, channel, dac_polyvoice, transpose, range_low, range_high, gate_source);
     // migrate old data
     if (function && get_type() == NONE) {
       switch (function) {
@@ -405,10 +601,10 @@ struct MIDIMapping : protected MIDIMapSettings {
         case HEM_MIDI_NOTE_PEDAL_OUT: SetPitch(NOTE_PEDAL); break;
         case HEM_MIDI_NOTE_INV_OUT: SetPitch(NOTE_INVERT); break;
 
-        case HEM_MIDI_GATE_OUT: SetGate(GATE_MONO); break;
-        case HEM_MIDI_GATE_POLY_OUT: SetGate(GATE_POLY); break;
-        case HEM_MIDI_GATE_INV_OUT: SetGate(GATE_INVERT); break;
-        case HEM_MIDI_RUN_OUT: SetGate(GATE_RUN); break;
+        case HEM_MIDI_GATE_OUT: SetDrum(); break;
+        case HEM_MIDI_GATE_POLY_OUT: SetDrum(); break;
+        case HEM_MIDI_GATE_INV_OUT: SetDrum(); break;
+        case HEM_MIDI_RUN_OUT: SetDrum(); break;
 
         case HEM_MIDI_TRIG_OUT: SetTrigger(TRIG_NORMAL); break;
         case HEM_MIDI_TRIG_1ST_OUT: SetTrigger(TRIG_FIRST); break;
@@ -432,7 +628,8 @@ struct MIDIMapping : protected MIDIMapSettings {
     }
     // validation for safety
     channel &= 0x1F;
-    dac_polyvoice &= 0x0F;
+    dac_polyvoice &= 0x3F; // 6 bits: 0-31=DAC/virtual, 0-31=IN-map slot (PIPE type)
+    gate_source = constrain(gate_source, -1, DAC_CHANNEL_COUNT - 1);
     if (range_low == 0 && range_high == 0) range_high = 127;
     if (range_high < range_low) range_high = range_low;
   }
@@ -449,7 +646,7 @@ constexpr MIDIMapping& pack(MIDIMapping& input) {
 
 struct alignas(32) MIDIFrame {
     MIDIMapping mapping[MIDIMAP_MAX];
-    MIDIMapping outmap[ADC_CHANNEL_COUNT];
+    MIDIMapping outmap[MIDIMAP_MAX];
 
     uint32_t last_msg_tick; // Tick of last received message
     uint16_t sustain_latch; // each bit is a MIDI channel's sustain state
@@ -482,11 +679,9 @@ struct alignas(32) MIDIFrame {
         mapping[ch].Init();
         mapping[ch].AdjustVoice(ch / 2 % DAC_CHANNEL_COUNT); // each quad is a unique voice
       }
-      for (int ch = 0; ch < ADC_CHANNEL_COUNT; ++ch) {
+      for (int ch = 0; ch < MIDIMAP_MAX; ++ch) {
         outmap[ch].Init();
-        if (ch & 1) outmap[ch].SetGate(0);
-        else outmap[ch].SetPitch(0);
-        //outmap[ch].function_cc = ch + 1; // idk why I did this
+        outmap[ch].AdjustVoice(ch % IO_CHANNEL_COUNT); // default output source cycles through all 32 outputs
       }
       clock_count = 0;
     }
@@ -698,14 +893,15 @@ struct alignas(32) MIDIFrame {
     }
 
     // MIDI output stuff
-    int outchan_last[DAC_CHANNEL_COUNT];
-    uint8_t current_note[16]; // note number, per MIDI channel
-    uint8_t current_ccval[DAC_CHANNEL_COUNT]; // level 0 - 127, per DAC channel
-    int note_countdown[DAC_CHANNEL_COUNT];
-    int last_cv[DAC_CHANNEL_COUNT];
-    bool clocked[DAC_CHANNEL_COUNT];
-    bool gate_high[DAC_CHANNEL_COUNT];
-    bool changed_cv[DAC_CHANNEL_COUNT];
+    int outchan_last[IO_CHANNEL_COUNT];
+    uint8_t current_note[16]; // note number, per MIDI channel (legacy: used by GATE/TRIGGER modes)
+    uint8_t current_note_map[MIDIMAP_MAX]; // note number, per map slot (for PITCH with gate_source)
+    uint8_t current_ccval[IO_CHANNEL_COUNT]; // level 0 - 127, per output channel
+    int note_countdown[IO_CHANNEL_COUNT];
+    int last_cv[IO_CHANNEL_COUNT]; // for change detection on any output channel
+    bool clocked[IO_CHANNEL_COUNT];
+    bool gate_high[IO_CHANNEL_COUNT];
+    bool changed_cv[IO_CHANNEL_COUNT];
 
     // Logging
     MIDIMessage log[7];
@@ -812,7 +1008,7 @@ struct IOFrame {
     bool gate_high[OC::DIGITAL_INPUT_LAST + IO_CHANNEL_COUNT];
 
     bool changed_cv[IO_CHANNEL_COUNT]; // Has the input changed by more than 1/8 semitone since the last read?
-    bool autoMIDIOut = false;
+    // autoMIDIOut removed — MIDI maps pipeline always runs
     bool synctrig = false;
 
     OC::IOFrame* GetLatestIOFrame() const {

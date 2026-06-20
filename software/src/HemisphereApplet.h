@@ -121,6 +121,7 @@ public:
     // 5-bit preset ID
     // 3-bit HEM_SIDE slot ID - assumes no more than 8 applet slots
     // 8-bit key
+#ifdef __IMXRT1062__
     bool GetData(PhzConfig::KEY key, PhzConfig::VALUE &data) {
       return PhzConfig::getData(
         (key & 0xff) | (uint16_t(hemisphere & 0x7) << 8) | (uint16_t(preset_id) << 11),
@@ -133,6 +134,7 @@ public:
         data
       );
     }
+#endif
 
     // standard entry points
     void BaseView(bool full_screen = false, bool parked = true) const;

@@ -458,6 +458,10 @@ public:
           data = PackPackables(frame.MIDIState.mapping[midx]);
           PhzConfig::setValue(MIDI_MAPS_KEY + midx, data);
         }
+        for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
+          data = PackPackables(frame.MIDIState.outmap[midx]);
+          PhzConfig::setValue(MIDI_MAPS_KEY + MIDIMAP_MAX + midx, data);
+        }
 
         // User Patterns aka Sequences
         for (size_t i = 0; i < OC::Patterns::PATTERN_USER_COUNT; ++i) {
@@ -598,6 +602,9 @@ public:
               q.octave,
               q.root_note,
               q.mask);
+          // Clamp to prevent OOB from corrupted EEPROM data (key collision fallout)
+          q.scale = constrain(q.scale, 0, OC::Scales::NUM_SCALES - 1);
+          q.root_note = constrain(q.root_note, 0, 11);
           q.Reconfig();
         }
 
@@ -606,6 +613,11 @@ public:
           if (!PhzConfig::getValue(MIDI_MAPS_KEY + midx, data))
               break;
           UnpackPackables(data, frame.MIDIState.mapping[midx]);
+        }
+        for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
+          if (!PhzConfig::getValue(MIDI_MAPS_KEY + MIDIMAP_MAX + midx, data))
+              break;
+          UnpackPackables(data, frame.MIDIState.outmap[midx]);
         }
         frame.MIDIState.UpdateMidiChannelFilter();
         frame.MIDIState.UpdateMaxPolyphony();
@@ -717,6 +729,11 @@ public:
         timeout = 0;
         // top-level MIDI-to-CV handling - alters frame outputs
         ProcessMIDI(usbMIDI);
+#ifdef ARDUINO_TEENSY41
+        ProcessMIDI(usbHostMIDI[0]);
+        ProcessMIDI(usbHostMIDI[1]);
+        if (MIDI_Uses_Serial8) ProcessMIDI(MIDI1);
+#endif
     }
 
     void Controller() {
@@ -842,6 +859,11 @@ public:
 
           case MIDI_MAPS:
             DrawMidiMaps(config_cursor - MIDIMAP1);
+            draw_applets = false;
+            break;
+
+          case MIDI_OUTMAPS:
+            DrawMidiMaps(config_cursor - OUTMAP1, /*output=*/true);
             draw_applets = false;
             break;
 
@@ -1197,10 +1219,20 @@ private:
         MIDIMAP25, MIDIMAP26, MIDIMAP27, MIDIMAP28,
         MIDIMAP29, MIDIMAP30, MIDIMAP31, MIDIMAP32,
 
+        // MIDI Output Maps
+        OUTMAP1, OUTMAP2, OUTMAP3, OUTMAP4,
+        OUTMAP5, OUTMAP6, OUTMAP7, OUTMAP8,
+        OUTMAP9, OUTMAP10, OUTMAP11, OUTMAP12,
+        OUTMAP13, OUTMAP14, OUTMAP15, OUTMAP16,
+        OUTMAP17, OUTMAP18, OUTMAP19, OUTMAP20,
+        OUTMAP21, OUTMAP22, OUTMAP23, OUTMAP24,
+        OUTMAP25, OUTMAP26, OUTMAP27, OUTMAP28,
+        OUTMAP29, OUTMAP30, OUTMAP31, OUTMAP32,
+
         // Applet visibility (dummy position)
         SHOWHIDELIST,
 
-        MAX_CURSOR = MIDIMAP32
+        MAX_CURSOR = SHOWHIDELIST
     };
 
     enum HEMConfigPage {
@@ -1209,6 +1241,7 @@ private:
       INPUT_SETTINGS,
       QUANTIZER_SETTINGS,
       MIDI_MAPS,
+      MIDI_OUTMAPS,
       SHOWHIDE_APPLETS,
 
       LAST_PAGE = SHOWHIDE_APPLETS
@@ -1219,7 +1252,7 @@ private:
           if (h == 0) { // change pages
             config_page = constrain(config_page + dir, 0, LAST_PAGE);
 
-            const int cursorpos[] = { LOAD_PRESET, TRIG_LENGTH, TRIGMAP1, QUANT1, MIDIMAP1, SHOWHIDELIST };
+            const int cursorpos[] = { LOAD_PRESET, TRIG_LENGTH, TRIGMAP1, QUANT1, MIDIMAP1, OUTMAP1, SHOWHIDELIST };
             config_cursor = cursorpos[config_page];
           } else if (config_page == SHOWHIDE_APPLETS) {
             showhide_cursor.Scroll(dir);
@@ -1230,7 +1263,8 @@ private:
             else if (config_cursor < TRIGMAP1) config_page = CONFIG_SETTINGS;
             else if (config_cursor < QUANT1) config_page = INPUT_SETTINGS;
             else if (config_cursor < MIDIMAP1) config_page = QUANTIZER_SETTINGS;
-            else if (config_cursor < SHOWHIDELIST) config_page = MIDI_MAPS;
+            else if (config_cursor < OUTMAP1) config_page = MIDI_MAPS;
+            else if (config_cursor < SHOWHIDELIST) config_page = MIDI_OUTMAPS;
             //else config_page = SHOWHIDE_APPLETS;
 
             ResetCursor();
@@ -1395,7 +1429,7 @@ private:
             break;
 
         case AUTO_MIDI:
-            HS::frame.autoMIDIOut = !HS::frame.autoMIDIOut;
+            // autoMIDIOut removed — MIDI maps are always active
             break;
 
             /*
@@ -1414,9 +1448,13 @@ private:
               HS::showhide_applet(showhide_cursor.cursor_pos());
             break;
         default: {
-            // I'm not going to paste 32 different MIDI cursor positions so it's just the default :P
-            int midx = constrain(config_cursor - MIDIMAP1, 0, 31);
-            HS::MidiMapEdit(midx);
+            if (config_cursor >= OUTMAP1 && config_cursor <= OUTMAP32) {
+                int oidx = config_cursor - OUTMAP1;
+                HS::MidiMapEditOutput(oidx);
+            } else {
+                int midx = constrain(config_cursor - MIDIMAP1, 0, MIDIMAP_MAX - 1);
+                HS::MidiMapEdit(midx);
+            }
             break;
           }
         }
@@ -1733,11 +1771,21 @@ void AppHemisphere::HandleButtonEvent(const UI::Event &event) {
 
         if (HS::midi_edit) {
           if (event.control == OC::CONTROL_BUTTON_A) {
-            mview = constrain(mview - 1, 0, MIDIMAP_MAX-1);
-            config_cursor = MIDIMAP1 + mview;
+            if (HS::mview_is_output) {
+              mview = constrain(mview - 1, 0, MIDIMAP_MAX - 1);
+              config_cursor = OUTMAP1 + mview;
+            } else {
+              mview = constrain(mview - 1, 0, MIDIMAP_MAX - 1);
+              config_cursor = MIDIMAP1 + mview;
+            }
           } else if (event.control == OC::CONTROL_BUTTON_B) {
-            mview = constrain(mview + 1, 0, MIDIMAP_MAX-1);
-            config_cursor = MIDIMAP1 + mview;
+            if (HS::mview_is_output) {
+              mview = constrain(mview + 1, 0, MIDIMAP_MAX - 1);
+              config_cursor = OUTMAP1 + mview;
+            } else {
+              mview = constrain(mview + 1, 0, MIDIMAP_MAX - 1);
+              config_cursor = MIDIMAP1 + mview;
+            }
           } else {
             // TODO: auto-learn from Z button
             HS::midi_edit = 0;

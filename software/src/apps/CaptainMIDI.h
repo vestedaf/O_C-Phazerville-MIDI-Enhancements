@@ -100,6 +100,8 @@ const settings::ValueAttributes CaptainSettings[] = {
   { 0, 0, 127, "", midi_note_numbers, settings::STORAGE_TYPE_U8 },
   // Range High
   { 0, 0, 127, "", midi_note_numbers, settings::STORAGE_TYPE_U8 },
+  // Gate Source (for Note type maps)
+  { 0, 0, DAC_CHANNEL_COUNT - 1, "", NULL, settings::STORAGE_TYPE_U8 },
 };
 
 enum CaptainsKeys : uint16_t {
@@ -277,6 +279,9 @@ public:
           case 4:
             m.AdjustRangeHigh(dir);
             break;
+          case 5:
+            m.AdjustGateSource(dir);
+            break;
           default: break;
         }
     }
@@ -289,8 +294,8 @@ public:
           PhzConfig::setValue(INPUT_MAP_KEY + i + active_setup*MIDIMAP_MAX,
               PackPackables(frame.MIDIState.mapping[i]));
         }
-        for (int i = 0; i < ADC_CHANNEL_COUNT; ++i) {
-          PhzConfig::setValue(OUTPUT_MAP_KEY + i + active_setup*ADC_CHANNEL_COUNT,
+        for (int i = 0; i < MIDIMAP_MAX; ++i) {
+          PhzConfig::setValue(OUTPUT_MAP_KEY + i + active_setup*MIDIMAP_MAX,
               PackPackables(frame.MIDIState.outmap[i]));
         }
     }
@@ -310,8 +315,8 @@ public:
             }
             UnpackPackables(data, frame.MIDIState.mapping[i]);
           }
-          for (int i = 0; i < ADC_CHANNEL_COUNT; ++i) {
-            if (!PhzConfig::getValue(OUTPUT_MAP_KEY + i + active_setup*ADC_CHANNEL_COUNT, data)) {
+          for (int i = 0; i < MIDIMAP_MAX; ++i) {
+            if (!PhzConfig::getValue(OUTPUT_MAP_KEY + i + active_setup*MIDIMAP_MAX, data)) {
               frame.MIDIState.Init();
               break;
             }
@@ -329,7 +334,7 @@ public:
     void SwitchScreenOrLogView(int dir) {
         if (display == 0) {
             // Switch screen
-            int new_screen = constrain(screen + dir, 0, 4);
+            int new_screen = constrain(screen + dir, 0, 5);
             SelectSetup(get_setup_number(), new_screen);
         } else {
             // Scroll Log view
@@ -446,9 +451,9 @@ public:
             PhzConfig::setValue(INPUT_MAP_KEY + i + target*MIDIMAP_MAX, data);
           }
           for (int i = 0; i < ADC_CHANNEL_COUNT; ++i) {
-            if (!PhzConfig::getValue(OUTPUT_MAP_KEY + i + source*ADC_CHANNEL_COUNT, data))
+            if (!PhzConfig::getValue(OUTPUT_MAP_KEY + i + source*MIDIMAP_MAX, data))
               break;
-            PhzConfig::setValue(OUTPUT_MAP_KEY + i + target*ADC_CHANNEL_COUNT, data);
+            PhzConfig::setValue(OUTPUT_MAP_KEY + i + target*MIDIMAP_MAX, data);
           }
            SelectSetup(target);
            Resume();
@@ -490,6 +495,7 @@ private:
           case 2: graphics.print("Transpose"); break;
           case 3: graphics.print("Range Low"); break;
           case 4: graphics.print("Range High"); break;
+          case 5: graphics.print("Gate Source"); break;
           default: break;
         }
         gfxPrint(128 - 42, 1, "Setup ");
@@ -554,12 +560,26 @@ private:
 
             // Draw the item last so that if it's selected, the icons are reversed, too
             if (!suppress) {
-              const int idx = (is_input && screen == 0) ? 0 : screen + 1;
-              list_item.SetPrintPos();
-              graphics.print(is_input ?
-                  midi2cv_label[current] :
-                  cv2midi_label[current - DAC_CHANNEL_COUNT]);
-              list_item.DrawDefault(GetLabel(current), GetValue(current), CaptainSettings[idx]);
+              // Suppress Gate Source for input maps and non-PITCH output maps
+              if (screen == 5) {
+                if (is_input) suppress = 1;
+                else {
+                  MIDI_OUT_FUNCTION out_fn = get_out_assign(p);
+                  if (out_fn != MIDI_OUT_NOTE) suppress = 1;
+                }
+              }
+              if (!suppress) {
+                const int idx = (is_input && screen == 0) ? 0 : screen + 1;
+                list_item.SetPrintPos();
+                graphics.print(is_input ?
+                    midi2cv_label[current] :
+                    cv2midi_label[current - DAC_CHANNEL_COUNT]);
+                list_item.DrawDefault(GetLabel(current), GetValue(current), CaptainSettings[idx]);
+              } else {
+                list_item.SetPrintPos();
+                graphics.print("                   --");
+                list_item.DrawCustom();
+              }
             } else {
                 list_item.SetPrintPos();
                 graphics.print("                   --");
@@ -579,6 +599,7 @@ private:
         case 2: return m.get_transpose();
         case 3: return m.get_low();
         case 4: return m.get_high();
+        case 5: return m.get_gate_source();
         default: return 0;
       }
     }
@@ -886,7 +907,7 @@ private:
         default:
         case Type::NONE: return MIDI_OUT_OFF;
         case Type::PITCH: return MIDI_OUT_NOTE;
-        case Type::GATE: return MIDI_OUT_LEGATO;
+        case Type::DRUM: return MIDI_OUT_LEGATO;
         case Type::TRIGGER: return MIDI_OUT_VELOCITY;
         case Type::MODULATOR: return MIDI_OUT_PITCHBEND;
         case Type::CCONTROL: return MIDI_OUT_MOD;
