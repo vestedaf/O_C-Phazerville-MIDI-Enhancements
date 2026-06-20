@@ -169,7 +169,7 @@ bool HS::MIDIMapping::ProcessMsg(const MIDIMessage msg, HS::MIDIFrame &state) {
             }
             break;
 
-          case GATE:
+          case DRUM:
             switch (get_subtype()) {
             case GATE_RETRIG:
                 if (output > 0) {
@@ -331,38 +331,137 @@ bool HS::MIDIMapping::ProcessMsg(const MIDIMessage msg, HS::MIDIFrame &state) {
 }
 
 void HS::MIDIFrame::Send(const SlewedValue *outvals) {
-    // first pass - calculate things and turn off notes
-    for (int i = 0; i < DAC_CHANNEL_COUNT; ++i) {
-        const uint8_t midi_ch = outmap[i].get_channel();
+    // Iterate over all 32 output map slots.
+    // Each slot reads from the DAC channel selected by dac_polyvoice.
+    for (int i = 0; i < MIDIMAP_MAX; ++i) {
+        MIDIMapping &om = outmap[i];
+        if (om.get_type() == MIDIMapSettings::NONE) continue;
 
-        int input = outvals[i].get();
-        gate_high[i] = input > (12 << 7);
-        clocked[i] = (gate_high[i] && last_cv[i] < (12 << 7));
-        if (abs(input - last_cv[i]) > HEMISPHERE_CHANGE_THRESHOLD) {
-            changed_cv[i] = 1;
-            last_cv[i] = input;
-        } else changed_cv[i] = 0;
+        const uint8_t midi_ch = om.get_channel();
+        const int dac_ch = om.get_voice(); // dac_polyvoice selects the output source (0-31)
 
-        // outmaps don't discriminate on subtypes, we keep it simple
-        switch (outmap[i].get_type()) {
-          case MIDIMapSettings::PITCH:
-            if (changed_cv[i]) {
-              // a note has changed, turn the last one off first
-              SendNoteOff(outchan_last[i]);
-              current_note[midi_ch] = MIDIQuantizer::NoteNumber(input);
+        int input;
+        bool gate;
+
+        if (om.IsPipe()) {
+            // PIPE type: read from IN-map slot (dac_polyvoice = 0-31 → mapping[0-31])
+            const MIDIMapping &inmap = mapping[dac_ch];
+            if (inmap.get_type() != MIDIMapSettings::NONE) {
+                input = inmap.ViewOut();
+            } else {
+                input = 0;
+            }
+            gate = (input > 0); // Auto gate from IN-map note presence
+        } else {
+            // All traditional types: read from DAC/virtual channel
+            if (dac_ch < 0 || dac_ch >= IO_CHANNEL_COUNT) continue;
+            input = outvals[dac_ch].get();
+            gate = input > (12 << 7);
+        }
+
+        // Use out-map index (i) for tracking state arrays — always 0-31
+        bool changed = (abs(input - last_cv[i]) > HEMISPHERE_CHANGE_THRESHOLD);
+        if (changed) last_cv[i] = input;
+
+        switch (om.get_type()) {
+          case MIDIMapSettings::PITCH: {
+            // Gate-controlled Note output (mirrors 1.xx SendFlexibleMIDIOut)
+            const int8_t gs = om.get_gate_source();
+            int gate_cv = (gs >= 0 && gs < DAC_CHANNEL_COUNT) ? outvals[gs].get() : 0;
+            bool gate_now = gate_cv > (12 << 7);
+            bool gate_was = (current_note_map[i] != 0); // note was active = gate was high
+            uint8_t note = MIDIQuantizer::NoteNumber(input, om.get_transpose());
+            uint8_t last = current_note_map[i];
+
+            if (gate_now && !gate_was) {
+              SendNoteOn(midi_ch, note);
+              current_note_map[i] = note;
+              outchan_last[i] = midi_ch;
+            } else if (gate_now && gate_was && note != last) {
+              // Legato: pitch changed while gate held
+              SendNoteOff(midi_ch, last);
+              SendNoteOn(midi_ch, note);
+              current_note_map[i] = note;
+            } else if (!gate_now && gate_was) {
+              SendNoteOff(midi_ch, last);
+              current_note_map[i] = 0;
             }
             break;
+          }
 
-          case MIDIMapSettings::GATE:
-            if (!gate_high[i] && changed_cv[i])
-              SendNoteOff(midi_ch);
+          case MIDIMapSettings::DRUM: {
+            // Fixed-note drum trigger: gate DAC edge sends configured note
+            bool gate_now = gate;
+            bool drum_was = (current_note_map[i] != 0);
+            uint8_t drum_note = om.GetDrumNote();
+            if (gate_now && !drum_was) {
+              SendNoteOn(midi_ch, drum_note);
+              current_note_map[i] = drum_note;
+            } else if (!gate_now && drum_was) {
+              SendNoteOff(midi_ch, drum_note);
+              current_note_map[i] = 0;
+            }
             break;
+          }
 
           case MIDIMapSettings::CCONTROL: {
             const uint8_t newccval = ProportionCV(abs(input), 127);
             if (newccval != current_ccval[i]) {
-              SendCC(midi_ch, outmap[i].get_subtype(), newccval);
+              SendCC(midi_ch, om.get_subtype(), newccval);
               current_ccval[i] = newccval;
+            }
+            break;
+          }
+
+          case MIDIMapSettings::MODULATOR: {
+            const uint8_t val = ProportionCV(abs(input), 127);
+            if (om.get_subtype() <= HS::MIDIMapSettings::MOD_BEND) {
+              switch (HS::MIDIMapSettings::ModType(om.get_subtype())) {
+                case HS::MIDIMapSettings::MOD_VEL_MONO:
+                  // Velocity is handled at note-on time; store for reference
+                  current_ccval[i] = val;
+                  break;
+                case HS::MIDIMapSettings::MOD_AT_CHAN:
+                  SendAfterTouch(midi_ch, val);
+                  break;
+                case HS::MIDIMapSettings::MOD_BEND: {
+                  uint16_t bend = Proportion(input + HEMISPHERE_3V_CV, HEMISPHERE_3V_CV * 2, 16383);
+                  bend = constrain(bend, 0, 16383);
+                  SendPitchBend(midi_ch, bend);
+                  break;
+                }
+                default: break;
+              }
+            } else {
+              // CC# mode: subtype 5-127 = CC# 0-122
+              const uint8_t cc_num = om.get_subtype() - (HS::MIDIMapSettings::MOD_BEND + 1);
+              if (val != current_ccval[i]) {
+                SendCC(midi_ch, cc_num, val);
+                current_ccval[i] = val;
+              }
+            }
+            break;
+          }
+
+          case MIDIMapSettings::PIPE: {
+            // PIPE: route IN-map note to MIDI output with transpose
+            uint8_t note = MIDIQuantizer::NoteNumber(input, om.get_transpose());
+            uint8_t last = current_note_map[i];
+
+            if (gate && (last == 0)) {
+              // Note on
+              SendNoteOn(midi_ch, note);
+              current_note_map[i] = note;
+              outchan_last[i] = midi_ch;
+            } else if (gate && (note != last)) {
+              // Legato: pitch changed while gate held
+              SendNoteOff(midi_ch, last);
+              SendNoteOn(midi_ch, note);
+              current_note_map[i] = note;
+            } else if (!gate && (last != 0)) {
+              // Note off
+              SendNoteOff(midi_ch, last);
+              current_note_map[i] = 0;
             }
             break;
           }
@@ -370,34 +469,17 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
           default: break;
         }
 
-        // Handle clock pulse timing
-        if (note_countdown[i] > 0) {
-            if (--note_countdown[i] == 0) SendNoteOff(outchan_last[i]);
-        }
-    }
-
-    // 2nd pass - send eligible notes
-    for (int i = 0; i < 2; ++i) {
-        const int chA = i*2;
-        const int chB = chA + 1;
-
-        if (outmap[chB].IsGate()) {
-            if (clocked[chB]) {
-                SendNoteOn(outmap[chB].get_channel());
-                // no countdown
-                outchan_last[chB] = outmap[chB].get_channel();
-            }
-        } else if (outmap[chA].IsPitch()) {
-            if (changed_cv[chA]) {
-                SendNoteOn(outmap[chA].get_channel());
-                note_countdown[chA] = HEMISPHERE_CLOCK_TICKS * trig_length;
-                outchan_last[chA] = outmap[chA].get_channel();
+        // Handle note-off timing for PITCH mode
+        if (om.get_type() == MIDIMapSettings::PITCH && note_countdown[i] > 0) {
+            if (--note_countdown[i] == 0) {
+                SendNoteOff(midi_ch, current_note[midi_ch]);
             }
         }
-    }
 
-    // I think this can cause the UI to lag and miss input
-    //usbMIDI.send_now();
+        bool prev_gate = gate_high[i];
+        gate_high[i] = gate;
+        clocked[i] = (gate && !prev_gate);
+    }
 }
 
 void HS::IOFrame::Load(OC::IOFrame *ioframe) {
@@ -513,5 +595,5 @@ void HS::IOFrame::Send(OC::IOFrame *ioframe) {
         ioframe->outputs.set_pitch_value(chan[i], outputs[i].get(output_atten[i]));
     }
 
-    if (autoMIDIOut) MIDIState.Send(outputs);
+    MIDIState.Send(outputs);
 }

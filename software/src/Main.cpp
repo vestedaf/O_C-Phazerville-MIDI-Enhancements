@@ -347,7 +347,9 @@ void setup() {
 #endif
 
   // initialize LittleFS for config files
+#ifdef __IMXRT1062__
   PhzConfig::Init();
+#endif
 
   // Display loading splash screen and optional calibration
   bool reset_settings = false;
@@ -366,7 +368,11 @@ void setup() {
 #endif
 
   // use default global config file in LFS
+#ifdef __IMXRT1062__
   bool firstrun = !PhzConfig::load_config();
+#else
+  bool firstrun = false;
+#endif
 
   // initialize apps
   OC::app_switcher.Init(reset_settings || firstrun);
@@ -508,19 +514,27 @@ void FASTRUN loop() {
 #endif
           case 'C':
             Serial.println("Resetting Config File!!");
+#ifdef __IMXRT1062__
             PhzConfig::clear_config();
             PhzConfig::save_config();
+#endif
           case 'l':
             Serial.println(" -=- LittleFS -=- ");
+#ifdef __IMXRT1062__
             PhzConfig::listFiles();
+#endif
             break;
           case 's':
             Serial.println(" -=- SD Card -=- ");
+#ifdef __IMXRT1062__
             PhzConfig::listFiles(SD);
+#endif
             break;
           case 'F':
             Serial.println("!! ERASING ALL FILES on LittleFS !!");
+#ifdef __IMXRT1062__
             PhzConfig::eraseFiles();
+#endif
             break;
 #endif
 

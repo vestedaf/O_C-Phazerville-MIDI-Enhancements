@@ -208,6 +208,7 @@ namespace HS {
   extern int q_edit;
   extern int midi_edit;
   extern uint8_t mview;
+  extern bool mview_is_output; // true when editing output maps
   extern ErrMsgIndex msg_idx;
 
   extern peaks::MultistageEnvelope env_[DAC_CHANNEL_COUNT];
@@ -260,9 +261,10 @@ namespace HS {
   void NudgeScale(int ch, int dir);
   void QuantizerEdit(int ch);
   void MidiMapEdit(int ch);
+  void MidiMapEditOutput(int ch);
   void QEditEncoderMove(bool rightenc, int dir);
   void MEditEncoderMove(bool rightenc, int dir);
-  void DrawMidiMaps(int curpos);
+  void DrawMidiMaps(int curpos, bool output = false);
   void DrawConfigRow(int row, int y, bool cur, bool editing);
   void DrawPopup(const int config_cursor = 0, const int preset_id = 0, const bool blink = 0);
   void ToggleClockRun();

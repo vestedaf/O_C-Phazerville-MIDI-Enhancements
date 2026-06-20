@@ -81,7 +81,7 @@ public:
             switch (map.get_type()) {
               case MIDIMapSettings::NONE:
                 break;
-              case MIDIMapSettings::GATE:
+              case MIDIMapSettings::DRUM:
                 if (map.get_subtype() == MIDIMapSettings::GATE_RUN) {
                   // TODO: this needs to be handled elsewhere
                   GateOut(ch, frame.MIDIState.clock_run);
@@ -251,8 +251,6 @@ private:
 
         gfxIcon(2, 34, MIDI_ICON);
         gfxPrint(13, 35, map.get_label());
-        if (map.get_type() == MIDIMapSettings::CCONTROL)
-          gfxPrint(map.get_subtype());
 
         if (cursor >= (MAP_A_RANGELOW + io_page*(MAP_A_RANGEHIGH+1))) {
           gfxPrint(1, 45, "<"); gfxPrint(HS::midi_note_numbers[map.get_low()]);

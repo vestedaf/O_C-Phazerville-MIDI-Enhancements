@@ -120,6 +120,7 @@ using namespace HS;
 #include "Voltage.h"
 #include "MarkoV.h"
 #include "MarkovPerc.h"
+//#include "Siggy.h"
 #ifdef PEWPEWPEW
 #include "WTVCO.h"
 #endif
@@ -220,6 +221,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
 #endif
     , DeclareApplet<Shredder, 58, CAT_MODULATOR>
     , DeclareApplet<Shuffle, 36, CAT_CLOCKING>
+    //, DeclareApplet<Siggy, 113, CAT_SEQUENCER>
     , DeclareApplet<Slew, 19, CAT_MODULATOR>
     , DeclareApplet<Squanch, 46, CAT_QUANTIZER>
     , DeclareApplet<Stairs, 61, CAT_MODULATOR>

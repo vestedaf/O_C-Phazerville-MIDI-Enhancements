@@ -32,6 +32,7 @@ namespace HS {
 
   int midi_edit = 0;
   uint8_t mview = 0;
+  bool mview_is_output = false; // true when editing output maps
 
   DigitalInputMap jump_trig_;
 
@@ -241,22 +242,52 @@ namespace HS {
   // -----
   void MidiMapEdit(int ch) {
     mview = constrain(ch, 0, MIDIMAP_MAX - 1);
+    mview_is_output = false;
+    midi_edit = 1;
+  }
+  void MidiMapEditOutput(int ch) {
+    mview = constrain(ch, 0, MIDIMAP_MAX - 1);
+    mview_is_output = true;
     midi_edit = 1;
   }
   enum MEditCursor {
-    OFF, CHANNEL,
-    MODE,
+    OFF, CHANNEL, MODE,
     VOICE,
-    RANGELOW, RANGEHIGH,
+    GATESOURCE,
+    TRANSPOSE,
+    RANGELOW,
+    RANGEHIGH,
 
     MEDITCURSOR_COUNT
   };
   void MEditEncoderMove(bool rightenc, int dir) {
+    MIDIMapping &map = mview_is_output
+        ? frame.MIDIState.outmap[mview]
+        : frame.MIDIState.mapping[mview];
     if (!rightenc) {
       // left encoder moves midi_edit cursor
-      midi_edit = constrain(midi_edit + dir, 1, MEDITCURSOR_COUNT-1);
+      midi_edit = constrain(midi_edit + dir, 1, MEDITCURSOR_COUNT - 1);
+      // Skip invalid edit positions for output map types
+      if (mview_is_output) {
+        if (map.get_type() == MIDIMapSettings::DRUM) {
+          // DRUM: CHANNEL(1), MODE(2), VOICE(3), DRUM_NOTE(6) are valid
+          // Skip GATESOURCE(4), TRANSPOSE(5), and RANGEHIGH(7)
+          if (midi_edit == 4)
+            midi_edit = (dir > 0) ? 6 : 3;  // skip GATESOURCE + TRANSPOSE
+          if (midi_edit == 5)
+            midi_edit = (dir > 0) ? 6 : 3;  // skip TRANSPOSE
+          if (midi_edit == 7)
+            midi_edit = (dir > 0) ? 1 : 6;  // skip RANGEHIGH
+          if (midi_edit > 7) midi_edit = 1;
+          if (midi_edit < 1) midi_edit = 6;
+        } else if (map.get_type() != MIDIMapSettings::PITCH) {
+          // TRIGGER, MODULATOR, CCONTROL: only CHANNEL(1), MODE(2), VOICE(3) are meaningful
+          // Skip GATESOURCE(4), TRANSPOSE(5), RANGELOW(6), RANGEHIGH(7)
+          if (midi_edit >= 4 && midi_edit <= 7)
+            midi_edit = 3; // bounce back to VOICE
+        }
+      }
     } else {
-      MIDIMapping &map = frame.MIDIState.mapping[mview];
       // right encoder is delegated
       switch(midi_edit){
         case 1: // chan
@@ -264,37 +295,59 @@ namespace HS {
           frame.MIDIState.UpdateMidiChannelFilter();
           break;
         case 2: // mode
-          map.AdjustFunction(dir);
+          if (mview_is_output)
+            map.AdjustFunctionOutput(dir);
+          else
+            map.AdjustFunction(dir);
           frame.MIDIState.UpdateMidiChannelFilter();
           frame.MIDIState.UpdateMaxPolyphony();
           break;
-        case 3: // voice (poly only)
+        case 3: // voice (poly only) / DAC source (output maps)
           map.AdjustVoice(dir);
           frame.MIDIState.UpdateMaxPolyphony();
           break;
-        case 4: // low
-          map.AdjustRangeLow(dir);
+        case 4: // gate source
+          map.AdjustGateSource(dir);
           break;
-        case 5: // high
+        case 5: // transpose
+          map.AdjustTranspose(dir);
+          break;
+        case 6: // low / drum note
+          if (mview_is_output && map.get_type() == MIDIMapSettings::DRUM) {
+            map.SetDrumNote(map.get_subtype() + dir);
+          } else {
+            map.AdjustRangeLow(dir);
+          }
+          break;
+        case 7: // high
           map.AdjustRangeHigh(dir);
           break;
       }
     }
   }
 
-  void DrawMidiMaps(int curpos) {
+  void DrawMidiMaps(int curpos, bool output = false) {
     const int w = 16;
     const int h = 13;
     CVInputMap cv_;
-    gfxHeader("<    MIDI Maps     >");
+    if (output)
+      gfxHeader("<  MIDI Out Maps  >");
+    else
+      gfxHeader("<  MIDI In Maps   >");
     for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
-      cv_.SetMidiMap(midx);
       int x = 1 + (midx % 8) * w;
       int y = 12 + (midx / 8) * h;
       gfxPos(x, y);
-      gfxPrint(cv_);
-      if (frame.MIDIState.mapping[midx].enabled())
-        gfxInvert(x, y, 9, 9);
+      if (output) {
+        gfxIcon(x, y, PhzIcons::midiOut);
+        if (frame.MIDIState.outmap[midx].enabled())
+          gfxInvert(x, y, 9, 9);
+      } else {
+        cv_.SetMidiMap(midx);
+        gfxPrint(cv_);
+        if (frame.MIDIState.mapping[midx].enabled())
+          gfxInvert(x, y, 9, 9);
+      }
     }
     int curx = 9 + (curpos % 8) * w;
     int cury = 12 + (curpos / 8) * h;
@@ -336,7 +389,7 @@ namespace HS {
       }
       case 6:
         gfxPrint(1, y, "AutoMIDI-Out  ");
-        gfxPrint(OC::Strings::off_on[frame.autoMIDIOut]);
+        gfxPrint("deprecated");
         break;
       case 7:
         gfxPrint(1, y, "MIDI PolyMd:  ");
@@ -570,25 +623,121 @@ namespace HS {
       }
       case MIDI_POPUP:
       {
-        MIDIMapping& map = frame.MIDIState.mapping[mview];
-        graphics.printf(
-          "Ch:%s %s", midi_channels[map.get_channel()], map.get_label()
-        );
-        if (map.get_type() == MIDIMapSettings::CCONTROL) gfxPrint(map.get_subtype());
+        MIDIMapping& map = mview_is_output
+            ? frame.MIDIState.outmap[mview]
+            : frame.MIDIState.mapping[mview];
 
+        // Clear popup content area and reset print position
+        graphics.clearRect(px + 2, py + 2, pw - 4, ph - 4);
+        graphics.setPrintPos(px + 5, py + 5);
+
+        if (mview_is_output) {
+          graphics.printf(
+            "Ch:%s %s", midi_channels[constrain(map.get_channel(), 0, 16)], map.get_out_label()
+          );
+        } else {
+          graphics.printf(
+            "Ch:%s %s", midi_channels[constrain(map.get_channel(), 0, 16)], map.get_label()
+          );
+        }
         graphics.setPrintPos(px + 5, py + 15);
-        graphics.printf(
-          "V:%d<%s:%s>",
-          map.get_voice() + 1,
-          midi_note_numbers[map.get_low()],
-          midi_note_numbers[map.get_high()]
-        );
+        int x_drum_voice = 0, x_drum_note = 0; // cursor arrow positions for DRUM data line
+        int x_pitch_voice = 0, x_pitch_gate = 0, x_pitch_transpose = 0, x_pitch_rlo = 0, x_pitch_rhi = 0; // PITCH cursor positions
+        int x_voice = 0; // non-pitch/drum voice cursor position
+        if (mview_is_output) {
+          if (map.get_type() == MIDIMapSettings::DRUM) {
+            // I1:1 36/C2
+            graphics.setPrintPos(px + 5, py + 15);
+            gfxPrint("I1:");
+            x_drum_voice = graphics.getPrintPosX();
+            gfxPrint(map.get_voice() + 1);
+            gfxPrint(" ");
+            x_drum_note = graphics.getPrintPosX();
+            uint8_t note = map.GetDrumNote();
+            gfxPrint(note);
+            gfxPrint("/");
+            gfxPrint(midi_note_numbers[note]);
+          } else if (map.get_type() == MIDIMapSettings::PITCH) {
+            // I1:A I2:2 [T+N] C3:C5
+            graphics.setPrintPos(px + 5, py + 15);
+            gfxPrint("I1:");
+            x_pitch_voice = graphics.getPrintPosX();
+            gfxPrint(map.GetOutputName(map.get_voice()));
+
+            // Gate source is essential for PITCH — always show
+            gfxPrint(" I2:");
+            x_pitch_gate = graphics.getPrintPosX();
+            gfxPrint(map.GetOutputName(map.get_gate_source()));
+
+            // Transpose: show if non-zero or editing
+            int8_t transpose = map.get_transpose();
+            if (transpose != 0 || midi_edit == 5) {
+              gfxPrint(" T");
+              x_pitch_transpose = graphics.getPrintPosX();
+              if (transpose > 0) gfxPrint("+");
+              gfxPrint(transpose);
+            } else {
+              x_pitch_transpose = graphics.getPrintPosX();
+            }
+
+            // Range: always show, no angle brackets
+            gfxPrint(" ");
+            x_pitch_rlo = graphics.getPrintPosX();
+            gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]);
+            gfxPrint(":");
+            x_pitch_rhi = graphics.getPrintPosX();
+            gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]);
+          } else if (mview_is_output && map.get_type() == MIDIMapSettings::PIPE) {
+            // PIPE: IN:M1 — show IN-map source slot
+            graphics.setPrintPos(px + 5, py + 15);
+            gfxPrint("IN:M");
+            x_voice = graphics.getPrintPosX();
+            gfxPrint(map.get_voice() + 1);
+          } else {
+            // MODULATOR, CCONTROL
+            graphics.setPrintPos(px + 5, py + 15);
+            gfxPrint("I1:");
+            x_voice = graphics.getPrintPosX();
+            gfxPrint(map.GetOutputName(map.get_voice()));
+          }
+        } else {
+          // In-maps: I1:1 C3:C5
+          graphics.setPrintPos(px + 5, py + 15);
+          gfxPrint("I1:");
+          gfxPrint(map.get_voice() + 1);
+          gfxPrint(" ");
+          gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]);
+          gfxPrint(":");
+          gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]);
+        }
 
         if (midi_edit) {
           if (midi_edit < 3) // chan or mode
             gfxIcon(px + 5 + 24 * midi_edit, 35, UP_BTN_ICON);
-          else // voice, range low, range high
-            gfxIcon(px + 17 + 20 * (midi_edit - 3), 45, UP_BTN_ICON);
+          else if (mview_is_output && map.get_type() == MIDIMapSettings::PITCH) {
+            // PITCH: I1:A I2:2 [T+N] C3:C5
+            // Edit cursor order matches display: VOICE(3), GATESOURCE(4), TRANSPOSE(5), RANGELOW(6), RANGEHIGH(7)
+            switch (midi_edit) {
+              case 3: gfxIcon(x_pitch_voice, 45, UP_BTN_ICON); break;   // voice (I1:)
+              case 4: gfxIcon(x_pitch_gate, 45, UP_BTN_ICON); break;   // gate (I2:)
+              case 5: gfxIcon(x_pitch_transpose, 45, UP_BTN_ICON); break;  // transpose (T)
+              case 6: gfxIcon(x_pitch_rlo, 45, UP_BTN_ICON); break;    // range low
+              case 7: gfxIcon(x_pitch_rhi, 45, UP_BTN_ICON); break;    // range high
+            }
+          } else if (mview_is_output && map.get_type() == MIDIMapSettings::DRUM) {
+            // DRUM: I1:1 36/C2 — CHANNEL(1), MODE(2), VOICE(3), DRUM_NOTE(6)
+            // Arrows positioned using getPrintPosX() from display print above
+            switch (midi_edit) {
+              case 1: gfxIcon(px + 5, 35, UP_BTN_ICON); break;              // channel (header)
+              case 2: gfxIcon(px + 5 + 30, 35, UP_BTN_ICON); break;         // mode label (header)
+              case 3: gfxIcon(x_drum_voice, 45, UP_BTN_ICON); break;        // voice number
+              case 6: gfxIcon(x_drum_note, 45, UP_BTN_ICON); break;         // drum note (36/C2)
+              default: break;
+            }
+          } else {
+            // non-pitch/drum: cursor on voice (DAC:X)
+            if (midi_edit == 3) gfxIcon(x_voice, 45, UP_BTN_ICON);
+          }
 
           // context clues at top/bottom of screen
           gfxFooter("L:cursor     R:adjust");
