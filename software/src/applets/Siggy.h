@@ -15,21 +15,25 @@
 class Siggy : public HemisphereApplet {
 public:
 
-    // Cursor layout: Div weights (4) + loop_length + div_cv_mode + melo_low + melo_high + melo_rotate + melo_cv_mode + accent + octave_prob
+    // Cursor layout for normal (half-screen) mode
     enum SiggyCursor {
-        // ProbDiv side
+        // Page 0: ProbDiv
         WEIGHT1, WEIGHT2, WEIGHT4, WEIGHT8,
         LOOP_LENGTH,
-        DIV_CV_MODE,      // CV input assignment for ProbDiv
-        // ProbMeloD side
+        DIV_CV_MODE,
+        // Page 1: ProbMeloD
         MELO_LOWER, MELO_UPPER,
         MELO_ROTATE,
         MELO_CV_MODE,
-        // Shared features
-        ACCENT_PROB,      // Probability of accent (0-15)
-        OCTAVE_PROB,      // Probability of octave shift (0-15)
+        // Page 1: Shared features
+        ACCENT_PROB,
+        OCTAVE_PROB,
         LAST_CURSOR = OCTAVE_PROB
     };
+
+    static constexpr uint8_t PAGE_DIV = 0;
+    static constexpr uint8_t PAGE_MELO = 1;
+    static constexpr uint8_t LAST_PAGE = PAGE_MELO;
 
     // CV input modes for ProbDiv
     enum DivCvMode {
@@ -78,6 +82,8 @@ public:
         octave_prob = 2;    // ~12% chance
         accent_cv = 0;
         octave_cv = 0;
+
+        page_ = PAGE_DIV;
 
         ForEachChannel(ch) {
             GateOut(ch, false);
@@ -185,14 +191,61 @@ public:
         if (value_animation > 0) value_animation--;
     }
 
+    // Normal hemisphere view: one page at a time (full 64×64)
     void View() {
+        if (page_ == PAGE_DIV) {
+            DrawDivSide();
+        } else {
+            DrawMeloSide();
+        }
+        // Page indicator icon at top-right
+        if (page_ == PAGE_DIV) {
+            gfxIcon(56, 1, LEFT_ICON);  // left arrow = Div page
+        } else {
+            gfxIcon(56, 1, RIGHT_ICON); // right arrow = MeloD page
+        }
+    }
+
+    // Full-screen view: side-by-side (left 64px = Div, right 64px = MeloD)
+    void DrawFullScreen() {
+        drawing_fullscreen_ = true;
         DrawDivSide();
         DrawMeloSide();
+        drawing_fullscreen_ = false;
     }
 
     void OnEncoderMove(int direction) {
         if (!EditMode()) {
-            MoveCursor(cursor, direction, LAST_CURSOR);
+            // Page-specific cursor navigation with page transitions
+            if (page_ == PAGE_DIV) {
+                // Div page: WEIGHT1..DIV_CV_MODE
+                if (direction > 0 && cursor >= DIV_CV_MODE) {
+                    // Scroll past last Div param → go to MeloD page
+                    page_ = PAGE_MELO;
+                    cursor = MELO_LOWER;
+                    ResetCursor();
+                    return;
+                }
+                if (direction < 0 && cursor <= WEIGHT1) {
+                    // Stay at first param (no previous page)
+                    return;
+                }
+                MoveCursor(cursor, direction, DIV_CV_MODE);
+            } else {
+                // MeloD page: MELO_LOWER..OCTAVE_PROB
+                if (direction > 0 && cursor >= OCTAVE_PROB) {
+                    // Stay at last param (no next page)
+                    return;
+                }
+                if (direction < 0 && cursor <= MELO_LOWER) {
+                    // Scroll before first MeloD param → go back to Div page
+                    page_ = PAGE_DIV;
+                    cursor = DIV_CV_MODE;
+                    ResetCursor();
+                    return;
+                }
+                MoveCursor(cursor, direction, OCTAVE_PROB);
+            }
             return;
         }
 
@@ -256,6 +309,7 @@ public:
         Pack(data, PackLocation{56,4}, melo_cv_mode);
         Pack(data, PackLocation{60,4}, accent_prob);
         // octave_prob at bit 64 — need more space, skip for now
+        // page_ at bit 64 — also needs more space, handle later
         return data;
     }
 
@@ -316,6 +370,10 @@ private:
     int reseed_animation = 0;
     int reset_animation = 0;
     int value_animation = 0;
+
+    // Page state
+    uint8_t page_ = PAGE_DIV;
+    bool drawing_fullscreen_ = false;
 
     ProbLoopLinker &loop_linker = ProbLoopLinker::get();
 
@@ -503,8 +561,13 @@ private:
     // Left half (x 0-63): ProbDiv
     // Right half (x 64-127): ProbMeloD
 
+    // Check if we're being called in full-screen mode (128×64) or normal mode (64×64)
+    bool IsFullScreen() const {
+        return drawing_fullscreen_;
+    }
+
     void DrawDivSide() {
-        // Division weights — left side
+        // Division weights — left side (or full width in normal mode)
         for (int i = 0; i < 4; i++) {
             int x = 1;
             int y = 15 + (i * 10);
@@ -537,7 +600,9 @@ private:
     }
 
     void DrawMeloSide() {
-        int ox = 64;  // Right half offset
+        // In full-screen mode, right half starts at x=64
+        // In normal mode (page 1), use full width starting at x=0
+        int ox = drawing_fullscreen_ ? 64 : 0;
 
         // Draw note weights as vertical bars
         int8_t ws[12];
