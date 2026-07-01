@@ -644,7 +644,7 @@ constexpr MIDIMapping& pack(MIDIMapping& input) {
   return input;
 }
 
-struct alignas(32) MIDIFrame {
+struct MIDIFrame {
     MIDIMapping mapping[MIDIMAP_MAX];
     MIDIMapping outmap[MIDIMAP_MAX];
 
@@ -735,6 +735,12 @@ struct alignas(32) MIDIFrame {
             if (map.get_type() == MIDIMapSettings::NONE || !map.IsPoly()) continue;
             if (map.get_voice() > voice) voice = map.get_voice();
         }
+        // Clamp to poly_buffer capacity. get_voice() (dac_polyvoice) can be 0-63,
+        // but poly_buffer only has DAC_CHANNEL_COUNT elements. A stale/corrupt map
+        // decoding as a poly type with a high voice would otherwise make max_voice
+        // huge, causing OOB writes in FindNextAvailPolyVoice/WritePolyNoteData on the
+        // next NoteOn (hard fault).
+        if (voice >= DAC_CHANNEL_COUNT) voice = DAC_CHANNEL_COUNT - 1;
         if (max_voice != voice+1) {
             ClearPolyBuffer();
             max_voice = voice+1;
@@ -742,6 +748,7 @@ struct alignas(32) MIDIFrame {
     }
 
     bool CheckPolyVoice(const uint8_t voice) {
+        if (voice >= DAC_CHANNEL_COUNT) return false; // voice may be a user-set dac_polyvoice (0-63)
         return (poly_buffer[voice].gate);
     }
 
@@ -779,12 +786,14 @@ struct alignas(32) MIDIFrame {
     }
 
     void WritePolyNoteData(const uint8_t note, const uint8_t vel, const uint8_t voice) {
+        if (voice >= DAC_CHANNEL_COUNT) return;
         poly_buffer[voice].note = note;
         poly_buffer[voice].vel = vel;
         poly_buffer[voice].gate = 1;
     }
 
     void ClearPolyVoice(const uint8_t voice) {
+        if (voice >= DAC_CHANNEL_COUNT) return;
         poly_buffer[voice].vel = 0;
         poly_buffer[voice].gate = 0;
     }
@@ -893,7 +902,7 @@ struct alignas(32) MIDIFrame {
 
     // MIDI output stuff
     int outchan_last[IO_CHANNEL_COUNT];
-    uint8_t current_note[16]; // note number, per MIDI channel (legacy: used by GATE/TRIGGER modes)
+    uint8_t current_note[17]; // note number, per MIDI channel (index 16 = Omni)
     uint8_t current_note_map[MIDIMAP_MAX]; // note number, per map slot (for PITCH with gate_source)
     uint8_t current_ccval[IO_CHANNEL_COUNT]; // level 0 - 127, per output channel
     int note_countdown[IO_CHANNEL_COUNT];

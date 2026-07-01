@@ -153,10 +153,10 @@ public:
 
         MIDI_MAPS_KEY   = 150, // + 0..32
 
-        // 200s = Quantizers
-        Q_ENGINE_KEY    = 200, // + slot number (200 - 207)
-
-        // 256 = used by Audio Applets
+        // 230s = Quantizers (moved from 250 to avoid collision with Audio
+        // Applet MONO_APPLETS section at preset_key|256, and from 200 to
+        // avoid collision with MIDI out-maps at 182-213)
+        Q_ENGINE_KEY    = 230, // + slot number (230 - 237)
 
         // 300-428 = Sequences (aka Patterns)
         SEQUENCES_KEY   = 300, // + blob index
@@ -424,10 +424,25 @@ public:
         if (PhzConfig::getValue(PRESET_JUMP_KEY, data))
           UnpackPackables(data, jump_trig_);
 
+        // Clean up old quantizer key ranges:
+        // - 200-207: collided with MIDI out-maps 182-213 (held out-map data, not quantizer data)
+        // - 250-257: collided with Audio Applet MONO_APPLETS at preset_key|256
+        for (size_t qslot = 0; qslot < QUANT_CHANNEL_COUNT; ++qslot) {
+            uint64_t migrate_data;
+            if (!PhzConfig::getValue(Q_ENGINE_KEY + qslot, migrate_data)) {
+                // No data at new location — check old
+                if (PhzConfig::getValue(200 + qslot, migrate_data)) {
+                    PhzConfig::setValue(Q_ENGINE_KEY + qslot, migrate_data);
+                }
+            }
+            PhzConfig::deleteKey(200 + qslot);
+            PhzConfig::deleteKey(250 + qslot);
+        }
+
         // Global quantizer settings
         for (size_t qslot = 0; qslot < QUANT_CHANNEL_COUNT; ++qslot) {
           if (!PhzConfig::getValue(Q_ENGINE_KEY + qslot, data))
-              break;
+              continue;
           auto &q = q_engine[qslot];
           UnpackPackables(data,
               q.scale,
@@ -442,12 +457,12 @@ public:
         // Global MIDI Maps
         for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
           if (!PhzConfig::getValue(MIDI_MAPS_KEY + midx, data))
-              break;
+              continue;
           UnpackPackables(data, frame.MIDIState.mapping[midx]);
         }
         for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
           if (!PhzConfig::getValue(MIDI_MAPS_KEY + MIDIMAP_MAX + midx, data))
-              break;
+              continue;
           UnpackPackables(data, frame.MIDIState.outmap[midx]);
         }
         frame.MIDIState.UpdateMidiChannelFilter();

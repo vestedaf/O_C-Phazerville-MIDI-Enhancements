@@ -134,7 +134,7 @@ bool HS::MIDIMapping::ProcessMsg(const MIDIMessage msg, HS::MIDIFrame &state) {
             switch (get_subtype()) {
             // note # output functions
             case NOTE_MONO:
-                output = MIDIQuantizer::CV(state.GetNoteLast(buf));
+                if (buf.size() > 0) output = MIDIQuantizer::CV(state.GetNoteLast(buf));
                 break;
 
             case NOTE_POLY:
@@ -142,19 +142,19 @@ bool HS::MIDIMapping::ProcessMsg(const MIDIMessage msg, HS::MIDIFrame &state) {
                 break;
 
             case NOTE_MIN:
-                output = MIDIQuantizer::CV(state.GetNoteMin(buf));
+                if (buf.size() > 0) output = MIDIQuantizer::CV(state.GetNoteMin(buf));
                 break;
 
             case NOTE_MAX:
-                output = MIDIQuantizer::CV(state.GetNoteMax(buf));
+                if (buf.size() > 0) output = MIDIQuantizer::CV(state.GetNoteMax(buf));
                 break;
 
             case NOTE_PEDAL:
-                output = MIDIQuantizer::CV(state.GetNoteFirst(buf));
+                if (buf.size() > 0) output = MIDIQuantizer::CV(state.GetNoteFirst(buf));
                 break;
 
             case NOTE_INVERT:
-                output = MIDIQuantizer::CV(state.GetNoteLastInv(buf));
+                if (buf.size() > 0) output = MIDIQuantizer::CV(state.GetNoteLastInv(buf));
                 break;
             }
             break;
@@ -345,6 +345,7 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
 
         if (om.IsPipe()) {
             // PIPE type: read from IN-map slot (dac_polyvoice = 0-31 → mapping[0-31])
+            if (dac_ch < 0 || dac_ch >= MIDIMAP_MAX) continue;
             const MIDIMapping &inmap = mapping[dac_ch];
             if (inmap.get_type() != MIDIMapSettings::NONE) {
                 input = inmap.ViewOut();
@@ -390,8 +391,10 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
           }
 
           case MIDIMapSettings::DRUM: {
-            // Fixed-note drum trigger: gate DAC edge sends configured note
-            bool gate_now = gate;
+            // Fixed-note drum trigger: gate source edge sends configured note
+            const int8_t gs = om.get_gate_source();
+            int gate_cv = (gs >= 0 && gs < DAC_CHANNEL_COUNT) ? outvals[gs].get() : 0;
+            bool gate_now = gate_cv > (12 << 7);
             bool drum_was = (current_note_map[i] != 0);
             uint8_t drum_note = om.GetDrumNote();
             if (gate_now && !drum_was) {

@@ -69,6 +69,7 @@ public:
             if (!map.enabled()) continue;
 
             int dac_ch = map.get_voice();
+            if (dac_ch < 0 || dac_ch >= IO_CHANNEL_COUNT) continue;
             int cv = frame.ViewOut(dac_ch);
             uint8_t ch_num = map.get_channel();
 
@@ -111,10 +112,13 @@ public:
               }
 
               case MIDIMapSettings::DRUM: {
-                // Gate output: note on/off based on gate threshold
-                bool gate = (cv > HEMISPHERE_CHANGE_THRESHOLD * 3);
+                // Gate output: note on/off based on gate source threshold
+                // Fixed note from user's drum selection — no CV pitch derivation
+                int8_t gs = map.get_gate_source();
+                int gate_cv = (gs >= 0 && gs < IO_CHANNEL_COUNT) ? frame.ViewOut(gs) : 0;
+                bool gate = (gate_cv > HEMISPHERE_CHANGE_THRESHOLD * 3);
                 if (gate && !last_gate[ch]) {
-                    uint8_t note = MIDIQuantizer::NoteNumber(cv, map.get_transpose());
+                    uint8_t note = map.GetDrumNote();
                     frame.MIDIState.SendNoteOn(ch_num, note, 0x64);
                     last_note[ch] = note;
                     UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
@@ -385,10 +389,11 @@ private:
         } else {
           // Default view: show DAC source + type-specific info on one line
           if (map.get_type() == MIDIMapSettings::DRUM) {
-            // DRUM: "G/T:M nn/Cn" — DAC source + MIDI note number + note name
-            gfxPrint(1, 45, "G/T:");
-            gfxPrint(19, 45, map.get_voice() + 1);
-            graphics.setPrintPos(30, 45);
+            // DRUM: "Gate:X nn/Cn" — gate source + MIDI note number + note name
+            gfxPrint(1, 45, "Gate:");
+            const char* outname = map.GetOutputName(map.get_gate_source());
+            gfxPrint(22, 45, outname);
+            graphics.setPrintPos(36, 45);
             uint8_t note = map.GetDrumNote();
             gfxPrint(note);
             gfxPrint("/");
@@ -429,9 +434,11 @@ private:
                 break;
             case hMIDIOut_A_DAC_SOURCE:
             case hMIDIOut_B_DAC_SOURCE:
-                if (map.get_type() == MIDIMapSettings::DRUM)
-                  gfxCursor(25, 53, 10); // drum: cursor over voice number (after "G/T:")
-                else
+                if (map.get_type() == MIDIMapSettings::DRUM) {
+                  // drum: cursor over gate source name (after "Gate:")
+                  const char* outname = map.GetOutputName(map.get_gate_source());
+                  gfxCursor(22 + strlen(outname) * 3, 53, 10);
+                } else
                   gfxCursor(25, 53, 10); // DAC value (after "DAC:")
                 break;
             case hMIDIOut_A_GATE_SOURCE:
