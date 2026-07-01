@@ -362,7 +362,7 @@ public:
 
         MIDI_MAPS_KEY  = 150, // + 0..32
 
-        Q_ENGINE_KEY   = 200, // + slot number
+        Q_ENGINE_KEY   = 250, // + slot number
 
         // 300-500 = Sequences (aka Patterns)
         SEQUENCES_KEY  = 300, // + blob index
@@ -593,9 +593,26 @@ public:
         if (PhzConfig::getValue(PRESET_JUMP_KEY, data))
           UnpackPackables(data, jump_trig_);
 
+        // Migrate old Q_ENGINE_KEY range (keys 200-207) — moved to 250-257.
+        // This MUST run BEFORE the load loop below, otherwise the load reads from
+        // the new keys before the data has been migrated and the quantizer settings
+        // are lost on every reboot.
+        for (size_t qslot = 0; qslot < QUANT_CHANNEL_COUNT; ++qslot) {
+            uint64_t migrate_data;
+            // Skip migration if already have data at new location (previously saved)
+            if (!PhzConfig::getValue(Q_ENGINE_KEY + qslot, migrate_data)) {
+                // Check old location for data to migrate
+                if (PhzConfig::getValue(200 + qslot, migrate_data)) {
+                    PhzConfig::setValue(Q_ENGINE_KEY + qslot, migrate_data);
+                }
+            }
+            // Always clean up old key
+            PhzConfig::deleteKey(200 + qslot);
+        }
+
         for (size_t qslot = 0; qslot < QUANT_CHANNEL_COUNT; ++qslot) {
           if (!PhzConfig::getValue(Q_ENGINE_KEY + qslot, data))
-              break;
+              continue;
           auto &q = q_engine[qslot];
           UnpackPackables(data,
               q.scale,

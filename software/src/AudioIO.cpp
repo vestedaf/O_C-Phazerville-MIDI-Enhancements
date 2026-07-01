@@ -18,18 +18,18 @@ namespace OC {
     AudioInputUSB input_usb;
     AudioMixer<2> usbmix[2];
     AudioOutputUSB output_usb;
-    AudioConnection out_conn_usbL{output_route, 0, output_usb, 0};
-    AudioConnection out_conn_usbR{output_route, 1, output_usb, 1};
-    AudioConnection out_conn_usbL2{input_stream, 0, output_usb, 2};
-    AudioConnection out_conn_usbR2{input_stream, 1, output_usb, 3};
+DMAMEM AudioConnection out_conn_usbL{output_route, 0, output_usb, 0};
+    DMAMEM AudioConnection out_conn_usbR{output_route, 1, output_usb, 1};
+    DMAMEM AudioConnection out_conn_usbL2{input_stream, 0, output_usb, 2};
+    DMAMEM AudioConnection out_conn_usbR2{input_stream, 1, output_usb, 3};
 
-    AudioConnection in_conn_usbL{input_usb, 2, usbmix[0], 0};
-    AudioConnection in_conn_usbR{input_usb, 3, usbmix[1], 0};
-    AudioConnection in_conn_mixL{output_route, 0, usbmix[0], 1};
-    AudioConnection in_conn_mixR{output_route, 1, usbmix[1], 1};
+    DMAMEM AudioConnection in_conn_usbL{input_usb, 2, usbmix[0], 0};
+    DMAMEM AudioConnection in_conn_usbR{input_usb, 3, usbmix[1], 0};
+    DMAMEM AudioConnection in_conn_mixL{output_route, 0, usbmix[0], 1};
+    DMAMEM AudioConnection in_conn_mixR{output_route, 1, usbmix[1], 1};
 #endif
 
-    AudioConnection out_conn[2];
+    DMAMEM AudioConnection out_conn[2];
 
     AudioStream& InputStream(int interface) {
       switch (interface) {
