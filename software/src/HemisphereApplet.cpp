@@ -3,8 +3,8 @@
 
 using namespace HS;
 
-DMAMEM HS::IOFrame HS::frame;
-DMAMEM HS::ClockManager HS::clock_m;
+HS::IOFrame HS::frame;
+HS::ClockManager HS::clock_m;
 
 int HemisphereApplet::cursor_countdown[APPLET_CURSOR_COUNT];
 int16_t HemisphereApplet::cursor_start_x;

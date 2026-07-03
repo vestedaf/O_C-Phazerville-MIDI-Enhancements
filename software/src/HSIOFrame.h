@@ -994,7 +994,7 @@ struct MIDIFrame {
 // this will allow chaining applets together, multiple stages of processing
 struct IOFrame {
     MIDIFrame MIDIState; /* MIDI message queue/cache */
-    OC::IOFrame* current_ioframe;
+    OC::IOFrame* current_ioframe = nullptr;
 
     // settings
     uint8_t clockinskip[IO_CHANNEL_COUNT];
@@ -1025,6 +1025,11 @@ struct IOFrame {
     }
 
     void Init() {
+      // DMAMEM/OCRAM is NOT zero-initialized at boot (NOLOAD section).
+      // Zero the entire IOFrame so garbage pointers/values don't cause hard faults
+      // before they're explicitly set. MIDIState.Init() will overwrite the relevant
+      // bytes with proper defaults.
+      memset(this, 0, sizeof(*this));
       MIDIState.Init();
       for (int i = 0; i < IO_CHANNEL_COUNT; ++i) {
         output_slew[i] = 0;
@@ -1032,13 +1037,14 @@ struct IOFrame {
         clockinskip[i] = 0;
         clockoutskip[i] = 0;
       }
+      current_ioframe = nullptr;
     }
 
     const int ViewOut(DAC_CHANNEL ch) const { return outputs[ch].get(output_atten[ch]); }
 
     // --- Soft IO ---
     int In(int ch) {
-      if (ch < ADC_CHANNEL_COUNT)
+      if (ch < ADC_CHANNEL_COUNT && current_ioframe)
         return current_ioframe->cv.pitch_values[ch];
       return 0;
     }
