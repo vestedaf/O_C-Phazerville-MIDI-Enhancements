@@ -428,13 +428,6 @@ public:
         // - 200-207: collided with MIDI out-maps 182-213 (held out-map data, not quantizer data)
         // - 250-257: collided with Audio Applet MONO_APPLETS at preset_key|256
         for (size_t qslot = 0; qslot < QUANT_CHANNEL_COUNT; ++qslot) {
-            uint64_t migrate_data;
-            if (!PhzConfig::getValue(Q_ENGINE_KEY + qslot, migrate_data)) {
-                // No data at new location — check old
-                if (PhzConfig::getValue(200 + qslot, migrate_data)) {
-                    PhzConfig::setValue(Q_ENGINE_KEY + qslot, migrate_data);
-                }
-            }
             PhzConfig::deleteKey(200 + qslot);
             PhzConfig::deleteKey(250 + qslot);
         }

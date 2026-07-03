@@ -353,7 +353,9 @@ void setup() {
 
   // Display loading splash screen and optional calibration
   bool reset_settings = false;
+  SERIAL_PRINTLN("[Phase 0: Splashscreen]");
   ui_mode = OC::ui.Splashscreen(reset_settings, 0);
+  SERIAL_PRINTLN("[Phase 0: Complete]");
 
   bool start_cal = false;
   if (ui_mode == OC::UI_MODE_CALIBRATE) {
@@ -369,13 +371,17 @@ void setup() {
 
   // use default global config file in LFS
 #ifdef __IMXRT1062__
+  SERIAL_PRINTLN("[PhzConfig: load_config]");
   bool firstrun = !PhzConfig::load_config();
+  SERIAL_PRINTLN("[PhzConfig: complete]");
 #else
   bool firstrun = false;
 #endif
 
   // initialize apps
+  SERIAL_PRINTLN("[AppSwitcher: Init]");
   OC::app_switcher.Init(reset_settings || firstrun);
+  SERIAL_PRINTLN("[AppSwitcher: complete]");
 
   // Welcome splash
   OC::ui.Splashscreen(firstrun, 1);
