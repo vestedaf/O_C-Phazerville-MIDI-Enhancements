@@ -636,7 +636,8 @@ namespace HS {
         x_mode = graphics.getPrintPosX();
         if (mview_is_output) gfxPrint(map.get_out_label());
         else gfxPrint(map.get_label());
-        if (map.get_type() == MIDIMapSettings::CCONTROL) gfxPrint(map.get_subtype());
+        // CC# is already included in the label string for CCONTROL and MODULATOR CC# mode;
+        // do not re-print get_subtype() here or the number duplicates in the UI.
 
         // --- Row 2: scrolling field ---
         if (midi_edit >= 3) {

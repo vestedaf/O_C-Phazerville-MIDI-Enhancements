@@ -443,6 +443,7 @@ private:
                 break;
             case hMIDIOut_A_GATE_SOURCE:
             case hMIDIOut_B_GATE_SOURCE: {
+                if (map.IsPipe()) break; // PIPE-type maps have no gate source cursor
                 // Position cursor after "DAC:X G:" where X is the output name
                 const char* outname = map.GetOutputName(map.get_voice());
                 int gate_cursor_x = 22 + strlen(outname) * 6 + 12; // after "DAC:" + name + " G:"
