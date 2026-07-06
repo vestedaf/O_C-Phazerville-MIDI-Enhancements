@@ -81,7 +81,7 @@ public:
             switch (map.get_type()) {
               case MIDIMapSettings::NONE:
                 break;
-              case MIDIMapSettings::DRUM:
+              case MIDIMapSettings::GATE:
                 if (map.get_subtype() == MIDIMapSettings::GATE_RUN) {
                   // TODO: this needs to be handled elsewhere
                   GateOut(ch, frame.MIDIState.clock_run);

@@ -169,7 +169,7 @@ bool HS::MIDIMapping::ProcessMsg(const MIDIMessage msg, HS::MIDIFrame &state) {
             }
             break;
 
-          case DRUM:
+          case GATE:
             switch (get_subtype()) {
             case GATE_RETRIG:
                 if (output > 0) {
@@ -390,7 +390,7 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
             break;
           }
 
-          case MIDIMapSettings::DRUM: {
+          case MIDIMapSettings::GATE: {
             // Fixed-note drum trigger: gate source edge sends configured note
             const int8_t gs = om.get_gate_source();
             int gate_cv = (gs >= 0 && gs < DAC_CHANNEL_COUNT) ? outvals[gs].get() : 0;

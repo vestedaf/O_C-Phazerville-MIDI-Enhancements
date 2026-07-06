@@ -907,7 +907,7 @@ private:
         default:
         case Type::NONE: return MIDI_OUT_OFF;
         case Type::PITCH: return MIDI_OUT_NOTE;
-        case Type::DRUM: return MIDI_OUT_LEGATO;
+        case Type::GATE: return MIDI_OUT_LEGATO;
         case Type::TRIGGER: return MIDI_OUT_VELOCITY;
         case Type::MODULATOR: return MIDI_OUT_PITCHBEND;
         case Type::CCONTROL: return MIDI_OUT_MOD;

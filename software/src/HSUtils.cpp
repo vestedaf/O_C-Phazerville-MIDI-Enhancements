@@ -268,8 +268,8 @@ namespace HS {
       // left encoder moves midi_edit cursor
       midi_edit = constrain(midi_edit + dir, 1, MEDITCURSOR_COUNT - 1);
       // Skip invalid edit positions
-      if (mview_is_output && map.get_type() == MIDIMapSettings::DRUM) {
-        // DRUM out map only has: CHANNEL(1), MODE(2), GATESOURCE(4=Gate), TRANSPOSE(5=Note)
+      if (mview_is_output && map.get_type() == MIDIMapSettings::GATE) {
+        // GATE out map only has: CHANNEL(1), MODE(2), GATESOURCE(4=Gate), TRANSPOSE(5=Note)
         // Never land on VOICE(3), RANGELOW(6), RANGEHIGH(7) — no Source/Voice field.
         if (midi_edit == 3)
           midi_edit = (dir > 0) ? 4 : 2;  // skip Voice
@@ -304,8 +304,8 @@ namespace HS {
         case 4: // gate source
           map.AdjustGateSource(dir);
           break;
-        case 5: // transpose / drum note (DRUM)
-          if (mview_is_output && map.get_type() == MIDIMapSettings::DRUM) {
+        case 5: // transpose / gate note (GATE)
+          if (mview_is_output && map.get_type() == MIDIMapSettings::GATE) {
             map.SetDrumNote(map.get_subtype() + dir);
           } else {
             map.AdjustTranspose(dir);
@@ -650,7 +650,7 @@ namespace HS {
                 case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); break;
                 case 7: x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
               }
-            } else if (map.get_type() == MIDIMapSettings::DRUM) {
+            } else if (map.get_type() == MIDIMapSettings::GATE) {
               switch (midi_edit) {
                 case 4: gfxPrint("Gate:"); x_arrow = graphics.getPrintPosX(); gfxPrint(map.GetOutputName(map.get_gate_source())); break;
                 case 5: gfxPrint("Note:"); x_arrow = graphics.getPrintPosX(); { uint8_t n = map.GetDrumNote(); gfxPrint(n); gfxPrint("/"); gfxPrint(midi_note_numbers[n]); } break;
