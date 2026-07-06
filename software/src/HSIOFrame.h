@@ -223,6 +223,12 @@ struct MIDIMapping : protected MIDIMapSettings {
       name[0] = 'A' + idx;
       name[1] = ' ';
       name[2] = ' ';
+    } else if (idx >= 16) {
+      // MIDI voice outputs beyond the hemisphere virtuals: M17..M32
+      uint8_t n = idx + 1;
+      name[0] = 'M';
+      name[1] = '0' + (n / 10);
+      name[2] = '0' + (n % 10);
     } else {
       // Virtual output beyond physical DAC range
       // Mapping: io_offset = hemisphere * 2, so hemisphere = idx / 2, output = idx % 2
