@@ -76,7 +76,7 @@ struct MIDIMapSettings {
   enum Type : uint8_t {
     NONE = 0,
     PITCH = (1 << 5),
-    DRUM   = (2 << 5),
+    GATE  = (2 << 5),
     TRIGGER = (3 << 5),
     MODULATOR = (4 << 5),
     CCONTROL = (5 << 5),
@@ -133,7 +133,7 @@ struct MIDIMapSettings {
     switch (t) {
       case NONE: return 1;
       case PITCH: return PITCH_TYPE_COUNT;
-      case DRUM: return 1;
+      case GATE: return 1;
       case TRIGGER: return TRIG_TYPE_COUNT;
       case MODULATOR: return MOD_TYPE_COUNT;
       case CCONTROL: return 128;
@@ -173,7 +173,7 @@ static const uint8_t drum_note_table[] = {
   50, // D3  - Ride Cymbal 1
   51, // D#3 - Ride Bell
 };
-static constexpr int DRUM_NOTE_COUNT = sizeof(drum_note_table);
+static constexpr int GATE_NOTE_COUNT = sizeof(drum_note_table);
 
 struct MIDIMapping : protected MIDIMapSettings {
   MIDIMapping() {}
@@ -272,7 +272,7 @@ struct MIDIMapping : protected MIDIMapSettings {
           default: break;
         }
         break;
-      case DRUM:
+      case GATE:
         return "Drum";
         break;
       case TRIGGER:
@@ -343,15 +343,15 @@ struct MIDIMapping : protected MIDIMapSettings {
     function_cc = constrain(subtype, -1, subtype_count(TRIGGER));
   }
   void SetDrum() {
-    function = DRUM;
+    function = GATE;
     function_cc = 0; // default: first entry in drum_note_table (Bass Drum)
   }
   void SetDrumNote(int8_t index) {
-    function_cc = constrain(index, 0, DRUM_NOTE_COUNT - 1);
+    function_cc = constrain(index, 0, GATE_NOTE_COUNT - 1);
   }
   // Get the actual MIDI note number for the current drum map
   uint8_t GetDrumNote() const {
-    return (get_type() == DRUM) ? drum_note_table[constrain(get_subtype(), 0, DRUM_NOTE_COUNT - 1)] : 0;
+    return (get_type() == GATE) ? drum_note_table[constrain(get_subtype(), 0, GATE_NOTE_COUNT - 1)] : 0;
   }
   void SetModulator(int8_t subtype) {
     function = MODULATOR;
@@ -376,10 +376,10 @@ struct MIDIMapping : protected MIDIMapSettings {
     return get_type() == PITCH;
   }
   const bool IsDrum() const {
-    return get_type() == DRUM;
+    return get_type() == GATE;
   }
   const bool IsGate() const {
-    return get_type() == DRUM; // DRUM is the output-side equivalent of GATE
+    return get_type() == GATE; // GATE is the output-side type
   }
   const bool IsTrigger() const {
     return get_type() == TRIGGER;
@@ -433,12 +433,12 @@ struct MIDIMapping : protected MIDIMapSettings {
   }
 
   static constexpr Type ordered_types[7] = {
-    NONE, PITCH, DRUM, TRIGGER, MODULATOR, CCONTROL, PIPE
+    NONE, PITCH, GATE, TRIGGER, MODULATOR, CCONTROL, PIPE
   };
   // Output-only type list: TRIGGER removed, MODULATOR+CCONTROL removed
-  // Available: NONE, PITCH (Note), DRUM, PIPE (Map)
+  // Available: NONE, PITCH (Note), GATE, PIPE (Map)
   static constexpr Type output_types[4] = {
-    NONE, PITCH, DRUM, PIPE
+    NONE, PITCH, GATE, PIPE
   };
 
   // Max output-meaningful subtype index for each type (inclusive)
@@ -446,7 +446,7 @@ struct MIDIMapping : protected MIDIMapSettings {
   static int8_t output_max_subtype(Type t) {
     switch (t) {
       case PITCH:     return NOTE_MONO;    // only Note (no PolyN/LoNote/HiNote/PdlNote/InvNote)
-      case DRUM:      return 0; // position 2 always overflows → type change; position 5 browses drum_note_table
+      case GATE:      return 0; // position 2 always overflows → type change; position 5 browses drum_note_table
       case MODULATOR: return MOD_TYPE_COUNT - 1 + 123; // Bend(4) + CC#0-122 = 127 (max int8_t)
       case CCONTROL:  return 127;          // legacy: all CC numbers (still used by in-maps)
       case PIPE:      return 31;           // IN-map slots 0-31 (M1-M32)
@@ -490,9 +490,9 @@ struct MIDIMapping : protected MIDIMapSettings {
   }
   // Output-map version: only cycles through output-meaningful subtypes
   void AdjustFunctionOutput(int dir) {
-    // DRUM: position 2 should change type, not browse drum notes
-    // output_max_subtype(DRUM) == 0, so any dir overflows → AdjustOutputType
-    if (get_type() == DRUM) {
+    // GATE: position 2 should change type, not browse drum notes
+    // output_max_subtype(GATE) == 0, so any dir overflows → AdjustOutputType
+    if (get_type() == GATE) {
       if (AdjustOutputType(dir)) return;
       // If AdjustOutputType didn't change type (shouldn't happen), keep current
       function_cc = 0;
@@ -532,7 +532,7 @@ struct MIDIMapping : protected MIDIMapSettings {
   // Helper: default subtype for a given type (used when creating/switching types)
   static int8_t default_subtype(Type t) {
     switch (t) {
-      case DRUM: return 0; // default: first entry in drum_note_table (Bass Drum, MIDI 36)
+      case GATE: return 0; // default: first entry in drum_note_table (Bass Drum, MIDI 36)
       default:   return 0;
     }
   }

@@ -56,7 +56,7 @@
 /* --- special Phazerville mode w/ easter eggs --- */
 // #define PEWPEWPEW
 /* --- alternate Grids patterns for DrumMap applet --- */
-// #define DRUMMAP_GRIDS2
+// #define GATEMAP_GRIDS2
 // 16 presets in Hemisphere
 // #define MOAR_PRESETS
 

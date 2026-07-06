@@ -20,15 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#ifdef DRUMMAP_GRIDS2
+#ifdef GATEMAP_GRIDS2
 #include "../grids2_resources.h"
 #else
 #include "../grids_resources.h"
 #endif
 
-#define HEM_DRUMMAP_PULSE_ANIMATION_TICKS 1000
-#define HEM_DRUMMAP_VALUE_ANIMATION_TICKS 16000
-#define HEM_DRUMMAP_AUTO_RESET_TICKS 30000
+#define GATEMAP_PULSE_ANIMATION_TICKS 1000
+#define GATEMAP_VALUE_ANIMATION_TICKS 16000
+#define GATEMAP_AUTO_RESET_TICKS 30000
 
 class DrumMap : public HemisphereApplet {
 public:
@@ -90,11 +90,11 @@ public:
                     if (mode[ch] < 3) {
                         // normal part
                         ClockOut(ch);
-                        pulse_animation[ch] = HEM_DRUMMAP_PULSE_ANIMATION_TICKS;
+                        pulse_animation[ch] = GATEMAP_PULSE_ANIMATION_TICKS;
                     } else if (level > 192) {
                         // accent
                         ClockOut(ch);
-                        pulse_animation[ch] = HEM_DRUMMAP_PULSE_ANIMATION_TICKS;
+                        pulse_animation[ch] = GATEMAP_PULSE_ANIMATION_TICKS;
                     }
                 }
             }
@@ -123,7 +123,7 @@ public:
         }
 
         // auto-reset after ~2 seconds of no clock
-        if (OC::CORE::ticks - last_clock > HEM_DRUMMAP_AUTO_RESET_TICKS && step != 0) {
+        if (OC::CORE::ticks - last_clock > GATEMAP_AUTO_RESET_TICKS && step != 0) {
             Reset();
         }
 
@@ -190,7 +190,7 @@ public:
             knob_accel = knob_accel << 1;
           }
           knob_accel = knob_accel << 2;
-          value_animation = HEM_DRUMMAP_VALUE_ANIMATION_TICKS;
+          value_animation = GATEMAP_VALUE_ANIMATION_TICKS;
         }
     }
 

@@ -111,7 +111,7 @@ public:
                 break;
               }
 
-              case MIDIMapSettings::DRUM: {
+              case MIDIMapSettings::GATE: {
                 // Gate output: note on/off based on gate source threshold
                 // Fixed note from user's drum selection — no CV pitch derivation
                 int8_t gs = map.get_gate_source();
@@ -388,8 +388,8 @@ private:
           gfxPrint(34, 45, HS::midi_note_numbers[map.get_high()]); gfxPrint(">");
         } else {
           // Default view: show DAC source + type-specific info on one line
-          if (map.get_type() == MIDIMapSettings::DRUM) {
-            // DRUM: "Gate:X nn/Cn" — gate source + MIDI note number + note name
+          if (map.get_type() == MIDIMapSettings::GATE) {
+            // GATE: "Gate:X nn/Cn" — gate source + MIDI note number + note name
             gfxPrint(1, 45, "Gate:");
             const char* outname = map.GetOutputName(map.get_gate_source());
             gfxPrint(22, 45, outname);
@@ -434,7 +434,7 @@ private:
                 break;
             case hMIDIOut_A_DAC_SOURCE:
             case hMIDIOut_B_DAC_SOURCE:
-                if (map.get_type() == MIDIMapSettings::DRUM) {
+                if (map.get_type() == MIDIMapSettings::GATE) {
                   // drum: cursor over gate source name (after "Gate:")
                   const char* outname = map.GetOutputName(map.get_gate_source());
                   gfxCursor(22 + strlen(outname) * 3, 53, 10);
