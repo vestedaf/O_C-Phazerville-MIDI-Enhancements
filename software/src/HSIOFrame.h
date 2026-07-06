@@ -273,7 +273,7 @@ struct MIDIMapping : protected MIDIMapSettings {
         }
         break;
       case GATE:
-        return "Drum";
+        return "Gate";
         break;
       case TRIGGER:
         switch (TrigType(get_subtype())) {
@@ -436,9 +436,9 @@ struct MIDIMapping : protected MIDIMapSettings {
     NONE, PITCH, GATE, TRIGGER, MODULATOR, CCONTROL, PIPE
   };
   // Output-only type list: TRIGGER removed, MODULATOR+CCONTROL removed
-  // Available: NONE, PITCH (Note), GATE, PIPE (Map)
-  static constexpr Type output_types[4] = {
-    NONE, PITCH, GATE, PIPE
+  // Available: NONE, PITCH (Note), GATE
+  static constexpr Type output_types[3] = {
+    NONE, PITCH, GATE
   };
 
   // Max output-meaningful subtype index for each type (inclusive)
@@ -449,7 +449,7 @@ struct MIDIMapping : protected MIDIMapSettings {
       case GATE:      return 0; // position 2 always overflows → type change; position 5 browses drum_note_table
       case MODULATOR: return MOD_TYPE_COUNT - 1 + 123; // Bend(4) + CC#0-122 = 127 (max int8_t)
       case CCONTROL:  return 127;          // legacy: all CC numbers (still used by in-maps)
-      case PIPE:      return 31;           // IN-map slots 0-31 (M1-M32)
+      case PIPE:      return 31;           // IN-map slots 0-31 (M1-M32); PIPE is no longer an output type, retained for in-maps
       default:        return 0;
     }
   }
