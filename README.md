@@ -79,7 +79,48 @@ Customize Apps and other flags inside `software/src/OC_options.h`. You can also 
 
 For Teensy 4.1, you'll need a copy of my forked playback library in your local sketchbook folder. Inside the `Arduino/libararies` directory: `git clone https://github.com/djphazer/teensy-variable-playback.git`
 
-## Credits
+## MIDI Maps v2 (feature/midi-maps-v2)
+
+This branch adds a comprehensive **MIDI Output Maps** system, extending the MIDI Input Maps with a parallel 32-slot output architecture. Key features:
+
+### Features
+
+| | Feature | Details |
+|---|---|---|
+| 🆕 | **MIDI Out Maps** | 32 output map slots, each with type (PITCH, GATE), channel, voice, gate source, transpose, and note range |
+| 🔗 | **Direct In-Map Routing** | Out-maps can read any in-map directly by setting voice/gate source ≥ 16 — no hMIDIIn applet required |
+| 🔄 | **PIPE Concept** | In-map routing as an internal concept (PIPE removed from out-map type selector) |
+| 🏷️ | **Smart Labels** | In-maps display "Gate" / out-maps display "Drum" for the same type |
+| 🖥️ | **Improved Popup** | Range low+high both visible during editing; CC# label cleaned up |
+| 📍 | **Output Names** | Virtual outputs M17-M32 display properly instead of `?A`/`?B` |
+| 🎛️ | **Frame-Level Processing** | MIDI output maps work in Quadrants without requiring hMIDIOut applet |
+| 🔊 | **Audio Safe** | Audio pipeline fully preserved — no DAC overwrites |
+
+### Build Environments
+```
+T40            — Teensy 4.0 (Hemisphere, single-slot)
+T41_audio      — Teensy 4.1 audio slot (Slot A, multiboot)
+T41            — Teensy 4.1 base (Slot B, multiboot)
+T41_MTP        — Teensy 4.1 multiboot (Slot X, stitched from all 3)
+```
+
+### Quick Build (T41 Multiboot)
+```bash
+cd software/
+pio run -e T41_audio && pio run -e T41 && pio run -e T41_MTP
+```
+
+### Configuration Guide
+
+**To route a PITCH in-map (M17) + GATE in-map (M18) through PITCH out-maps:**
+
+| Map | Type | Voice | Gate Source | Notes |
+|-----|------|-------|-------------|-------|
+| M17 | PITCH in-map | 1 (default) | — | Converts MIDI note → CV |
+| M18 | GATE in-map | 1 (set to match) | — | Produces gate pulse from MIDI |
+| Out-map | PITCH | **17** (routes to M17) | **18** (routes to M18) | Voice reads pitch, gate source reads gate |
+
+*Note: On T41 with `kOctaveZero = 5`, MIDI note 60 (C4) = 0V. For PIPE out-maps, play notes ≥ C#4 for gate detection.*
 
 Many minds before me have made this project possible. Attribution is present in the git commit log and within individual files.
 
