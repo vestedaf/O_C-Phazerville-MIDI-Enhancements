@@ -648,8 +648,8 @@ namespace HS {
                 case 3: gfxPrint("1v/O:"); x_arrow = graphics.getPrintPosX(); gfxPrint(map.GetOutputName(map.get_voice())); break;
                 case 4: gfxPrint("Gate:"); x_arrow = graphics.getPrintPosX(); gfxPrint(map.GetOutputName(map.get_gate_source())); break;
                 case 5: gfxPrint("T:"); x_arrow = graphics.getPrintPosX(); { int t = map.get_transpose(); if (t > 0) gfxPrint("+"); gfxPrint(t); } break;
-                case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); break;
-                case 7: x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
+                case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
+                case 7: gfxPrint("<"); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
               }
             } else if (map.get_type() == MIDIMapSettings::GATE) {
               switch (midi_edit) {
@@ -665,8 +665,8 @@ namespace HS {
             switch (midi_edit) {
               case 3: gfxPrint("V:"); x_arrow = graphics.getPrintPosX(); gfxPrint(map.get_voice() + 1); break;
               case 5: gfxPrint("T:"); x_arrow = graphics.getPrintPosX(); { int t = map.get_transpose(); if (t > 0) gfxPrint("+"); gfxPrint(t); } break;
-              case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); break;
-              case 7: x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
+              case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
+              case 7: gfxPrint("<"); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
             }
           }
         }

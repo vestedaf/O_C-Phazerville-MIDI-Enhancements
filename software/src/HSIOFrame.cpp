@@ -353,6 +353,11 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
                 input = 0;
             }
             gate = (input > 0); // Auto gate from IN-map note presence
+        } else if (dac_ch >= 16 && dac_ch < MIDIMAP_MAX) {
+            // Direct IN-map routing: voice 16-31 maps to in-maps M17-M32
+            // Bypasses the DAC entirely for virtual routing
+            input = mapping[dac_ch].ViewOut();
+            gate = (input > 0);
         } else {
             // All traditional types: read from DAC/virtual channel
             if (dac_ch < 0 || dac_ch >= IO_CHANNEL_COUNT) continue;
@@ -368,7 +373,14 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
           case MIDIMapSettings::PITCH: {
             // Gate-controlled Note output (mirrors 1.xx SendFlexibleMIDIOut)
             const int8_t gs = om.get_gate_source();
-            int gate_cv = (gs >= 0 && gs < DAC_CHANNEL_COUNT) ? outvals[gs].get() : 0;
+            int gate_cv;
+            if (gs >= 16 && gs < MIDIMAP_MAX) {
+              gate_cv = mapping[gs].ViewOut();
+            } else if (gs >= 0 && gs < DAC_CHANNEL_COUNT) {
+              gate_cv = outvals[gs].get();
+            } else {
+              gate_cv = 0;
+            }
             bool gate_now = gate_cv > (12 << 7);
             bool gate_was = (current_note_map[i] != 0); // note was active = gate was high
             uint8_t note = MIDIQuantizer::NoteNumber(input, om.get_transpose());
@@ -393,7 +405,14 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
           case MIDIMapSettings::GATE: {
             // Fixed-note drum trigger: gate source edge sends configured note
             const int8_t gs = om.get_gate_source();
-            int gate_cv = (gs >= 0 && gs < DAC_CHANNEL_COUNT) ? outvals[gs].get() : 0;
+            int gate_cv;
+            if (gs >= 16 && gs < MIDIMAP_MAX) {
+              gate_cv = mapping[gs].ViewOut();
+            } else if (gs >= 0 && gs < DAC_CHANNEL_COUNT) {
+              gate_cv = outvals[gs].get();
+            } else {
+              gate_cv = 0;
+            }
             bool gate_now = gate_cv > (12 << 7);
             bool drum_was = (current_note_map[i] != 0);
             uint8_t drum_note = om.GetDrumNote();

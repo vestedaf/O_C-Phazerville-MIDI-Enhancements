@@ -259,6 +259,7 @@ struct MIDIMapping : protected MIDIMapSettings {
 
   const char * const get_label() const {
     if (get_subtype() < 0) return "(learn)";
+    if (get_type() == GATE) return "Gate";
     return get_out_label();
   }
   // Out-map version: never shows "(learn)" — returns "None" for invalid subtypes
@@ -279,7 +280,7 @@ struct MIDIMapping : protected MIDIMapSettings {
         }
         break;
       case GATE:
-        return "Gate";
+        return "Drum";
         break;
       case TRIGGER:
         switch (TrigType(get_subtype())) {
