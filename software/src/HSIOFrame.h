@@ -636,7 +636,7 @@ struct MIDIMapping : protected MIDIMapSettings {
     // validation for safety
     channel &= 0x1F;
     dac_polyvoice &= 0x3F; // 6 bits: 0-31=DAC/virtual, 0-31=IN-map slot (PIPE type)
-    gate_source = constrain(gate_source, -1, DAC_CHANNEL_COUNT - 1);
+    gate_source = constrain(gate_source, -1, IO_CHANNEL_COUNT - 1);
     if (range_low == 0 && range_high == 0) range_high = 127;
     if (range_high < range_low) range_high = range_low;
   }
