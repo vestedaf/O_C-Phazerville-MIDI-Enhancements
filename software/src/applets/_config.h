@@ -85,6 +85,7 @@ using namespace HS;
 #include "Ponglet.h"
 #include "ProbabilityDivider.h"
 #include "ProbabilityMelody.h"
+#include "Siggy.h"
 #include "Relabi.h"
 #include "ResetClock.h"
 #include "RndWalk.h"
@@ -205,6 +206,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
     , DeclareApplet<Ponglet, 99, CAT_OTHER>
     , DeclareApplet<ProbabilityDivider, 59, CAT_CLOCKING>
     , DeclareApplet<ProbabilityMelody, 62, CAT_CLOCKING>
+    , DeclareApplet<Siggy, 100, CAT_CLOCKING | CAT_MODULATOR>
     , DeclareApplet<Relabi, 89, CAT_MODULATOR>
     , DeclareApplet<ResetClock, 70, CAT_UTILITY | CAT_CLOCKING>
     , DeclareApplet<RndWalk, 69, CAT_MODULATOR>

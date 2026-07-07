@@ -30,7 +30,7 @@ static constexpr int OC_CORE_TIMER_PRIO = 80;  // yet higher
 static constexpr int OC_GPIO_ISR_PRIO   = 112; // higher
 static constexpr int OC_UI_TIMER_PRIO   = 128; // default
 
-static constexpr unsigned long REDRAW_TIMEOUT_MS = 1;
+static constexpr unsigned long REDRAW_TIMEOUT_MS = 4;
 static constexpr uint32_t SCREENSAVER_TIMEOUT_S = 25; // default time out menu (in s)
 static constexpr uint32_t SCREENSAVER_TIMEOUT_MAX_S = 120;
 
@@ -113,5 +113,8 @@ static constexpr unsigned long SETTINGS_SAVE_TIMEOUT_MS = 1000;
 //#define OC_DEBUG_UI
 /* ------------ Enable debug trace pins -------------------------------------------------------------  */
 //#define OC_DEBUG_ENABLE_PINS
+
+#define OC_UI_DEBUG
+#define OC_UI_SEPARATE_ISR
 
 #endif // OC_CONFIG_H_
