@@ -5,7 +5,7 @@
 // Left half: ProbDiv (weighted probability divider)
 // Right half: ProbMeloD (weighted probability melody)
 // Both share a ProbLoopLinker for synchronized looping
-// Outputs: DAC ch0 = gate (from ProbDiv), DAC ch1 = pitch CV (from ProbMeloD)
+// Outputs: DAC0 = pitch CV (from ProbMeloD), DAC1 = gate voltage (from ProbDiv)
 // Bonus: Accent probability → velocity, CV-controllable octave shift
 
 #pragma once
@@ -27,8 +27,9 @@ public:
         MELO_CV_MODE,
         // Page 1: Shared features
         ACCENT_PROB,
-        OCTAVE_PROB,
-        LAST_CURSOR = OCTAVE_PROB
+        QSELECT,
+        DUR_SHORT, DUR_MID, DUR_LONG,
+        LAST_CURSOR = DUR_LONG
     };
 
     static constexpr uint8_t PAGE_DIV = 0;
@@ -47,7 +48,8 @@ public:
     static constexpr uint8_t MAX_WEIGHT = 15;
     static constexpr uint8_t MAX_LOOP_LENGTH = 32;
     static constexpr uint8_t MAX_MELO_WEIGHT = 10;
-    static constexpr uint8_t MAX_MELO_RANGE = 60;
+    static constexpr uint8_t MAX_MELO_RANGE = 31;
+    static constexpr uint8_t MAX_DUR_WEIGHT = 7;
 
     const char* applet_name() {
         return "Siggy";
@@ -69,28 +71,37 @@ public:
 
         // ProbMeloD state
         down = 1;
-        up = 12;
+        up = 7;
         pitch[0] = 0;
         pitch[1] = 0;
+        current_note_degree = 0;
+        current_note_semitone = 0;
         melo_cv_mode = 0;
-        for (int i = 0; i < 12; i++) {
-            weights[i] = 10;
+        for (int i = 0; i < 7; i++) {
+            degree_weights[i] = 3;
         }
+        degree_weights[0] = 7;   // root
+        degree_weights[3] = 5;   // 4th
+        degree_weights[4] = 5;   // 5th
 
         // Shared
-        accent_prob = 4;    // ~25% chance
-        octave_prob = 2;    // ~12% chance
+        accent_prob = 3;    // ~50% chance (0-7 scale)
         accent_cv = 0;
-        octave_cv = 0;
+        qselect = io_offset;
+        dur_short = 3; dur_mid = 5; dur_long = 2;
+
+        // Output state
+        curr_pitch_cv = 0;
+        curr_gate_cv = 0;
+        gate_off_tick = 0;
+        picked_gate_ratio = 4;
 
         page_ = PAGE_DIV;
-
-        ForEachChannel(ch) {
-            GateOut(ch, false);
-        }
     }
 
     void Controller() {
+        const uint32_t this_tick = OC::CORE::ticks;
+
         // === ProbDiv logic (left side) ===
         loop_linker.RegisterDiv(hemisphere);
 
@@ -112,6 +123,8 @@ public:
 
         // Clock(0) → ProbDiv trigger
         if (Clock(0)) {
+            uint32_t cycle_time = ClockCycleTicks(0);
+
             int reseed = DetentedIn(1);
             // Reseed on CV2 rising above 2.5V
             if (reseed > (5*ONE_OCTAVE >> 1) && !reseed_high) {
@@ -140,11 +153,9 @@ public:
             // Division logic
             if (--skip_steps > 0) {
                 if (loop_length_mod > 0) loop_step++;
-                ClockOut(1);  // Skip indicator
                 loop_linker.Trigger(1);
-                // Still fire ProbMeloD on skip
-                FireMelody(1);
-                return;
+                // Skip: no gate, no new pitch — just keep linker in sync
+                goto output_and_animate;;
             }
 
             if (loop_length_mod > 0) {
@@ -154,24 +165,28 @@ public:
                 skip_steps = GetNextWeightedDiv();
             }
 
-            if (skip_steps == 0) return;
+            if (skip_steps == 0) goto output_and_animate;;
 
-            ClockOut(0);  // Main clock output
+            // New note fires
             loop_linker.Trigger(0);
-            FireMelody(0);
+            curr_pitch_cv = FireMelody(0);
+            // Gate voltage: 3V normal, 5V accent (like TB-3PO)
+            curr_gate_cv = (accent_cv > 100) ? HEMISPHERE_3V_CV * 5 / 3 : HEMISPHERE_3V_CV;
+            gate_off_tick = this_tick + (cycle_time >> 1);
+        }
+
+        // === Auto gate-off (like TB3PO gate timing) ===
+        if (curr_gate_cv > 0 && gate_off_tick > 0 && this_tick >= gate_off_tick) {
+            gate_off_tick = 0;
+            curr_gate_cv = 0;
         }
 
         // === ProbMeloD logic (right side) ===
         loop_linker.RegisterMelo(hemisphere);
 
-        // CV modulation for melody range
-        down_mod = down;
-        up_mod = up;
-        uint8_t cvm = probmelod::cv_modes[melo_cv_mode].cv_config;
-        rotation[0] = semitone_cv_in((cvm >> 6) & 0b11);
-        rotation[1] = semitone_cv_in((cvm >> 4) & 0b11);
-        down_mod = constrain(down + semitone_cv_in((cvm >> 2) & 0b11), 1, up);
-        up_mod = constrain(up + semitone_cv_in(cvm & 0b11), down_mod, MAX_MELO_RANGE);
+        // CV modulation: CV inputs alter degree range
+        down_mod = constrain(down + (DetentedIn(0) >> 8), 1, 7);
+        up_mod = constrain(up + (DetentedIn(1) >> 8), down_mod, 7);
 
         // Reseed from ProbDiv
         regen = regen || loop_linker.ShouldRegenerate();
@@ -183,6 +198,11 @@ public:
             regen = false;
             GenerateMeloLoop();
         }
+
+    output_and_animate:
+        // Single output pair per tick — TB3PO convention: DAC0=pitch, DAC1=gate
+        Out(0, curr_pitch_cv);
+        Out(1, curr_gate_cv);
 
         // Animate
         if (pulse_animation > 0) pulse_animation--;
@@ -232,8 +252,8 @@ public:
                 }
                 MoveCursor(cursor, direction, DIV_CV_MODE);
             } else {
-                // MeloD page: MELO_LOWER..OCTAVE_PROB
-                if (direction > 0 && cursor >= OCTAVE_PROB) {
+                // MeloD page: MELO_LOWER..DUR_LONG
+                if (direction > 0 && cursor >= DUR_LONG) {
                     // Stay at last param (no next page)
                     return;
                 }
@@ -244,7 +264,7 @@ public:
                     ResetCursor();
                     return;
                 }
-                MoveCursor(cursor, direction, OCTAVE_PROB);
+                MoveCursor(cursor, direction, DUR_LONG);
             }
             return;
         }
@@ -273,16 +293,25 @@ public:
             up = constrain(up + direction, down, MAX_MELO_RANGE);
             break;
         case MELO_ROTATE:
-            rotate_masked_left(weights, 0xffff, 12, -direction);
+            rotate_masked_left(degree_weights, 0x7f, 7, -direction);
             break;
         case MELO_CV_MODE:
             melo_cv_mode = constrain(melo_cv_mode + direction, 0, (int)(std::size(probmelod::cv_modes) - 1));
             break;
         case ACCENT_PROB:
-            accent_prob = constrain(accent_prob + direction, 0, 15);
+            accent_prob = constrain(accent_prob + direction, 0, 7);
             break;
-        case OCTAVE_PROB:
-            octave_prob = constrain(octave_prob + direction, 0, 15);
+        case QSELECT:
+            qselect = constrain(qselect + direction, 0, 7);
+            break;
+        case DUR_SHORT:
+            dur_short = constrain(dur_short + direction, 0, MAX_DUR_WEIGHT);
+            break;
+        case DUR_MID:
+            dur_mid = constrain(dur_mid + direction, 0, MAX_DUR_WEIGHT);
+            break;
+        case DUR_LONG:
+            dur_long = constrain(dur_long + direction, 0, MAX_DUR_WEIGHT);
             break;
         default: break;
         }
@@ -301,15 +330,17 @@ public:
         Pack(data, PackLocation{4,4}, weight_2);
         Pack(data, PackLocation{8,4}, weight_4);
         Pack(data, PackLocation{12,4}, weight_8);
-        Pack(data, PackLocation{16,8}, loop_length);
-        Pack(data, PackLocation{24,16}, loop_linker.GetSeed());
-        Pack(data, PackLocation{40,4}, div_cv_mode);
-        Pack(data, PackLocation{44,6}, down);
-        Pack(data, PackLocation{50,6}, up);
-        Pack(data, PackLocation{56,4}, melo_cv_mode);
-        Pack(data, PackLocation{60,4}, accent_prob);
-        // octave_prob at bit 64 — need more space, skip for now
-        // page_ at bit 64 — also needs more space, handle later
+        Pack(data, PackLocation{16,5}, loop_length);
+        Pack(data, PackLocation{21,12}, loop_linker.GetSeed());
+        Pack(data, PackLocation{33,3}, div_cv_mode);
+        Pack(data, PackLocation{36,5}, down);
+        Pack(data, PackLocation{41,5}, up);
+        Pack(data, PackLocation{46,3}, melo_cv_mode);
+        Pack(data, PackLocation{49,3}, accent_prob);
+        Pack(data, PackLocation{52,3}, qselect);
+        Pack(data, PackLocation{55,3}, dur_short);
+        Pack(data, PackLocation{58,3}, dur_mid);
+        Pack(data, PackLocation{61,3}, dur_long);
         return data;
     }
 
@@ -318,13 +349,17 @@ public:
         weight_2 = Unpack(data, PackLocation{4,4});
         weight_4 = Unpack(data, PackLocation{8,4});
         weight_8 = Unpack(data, PackLocation{12,4});
-        loop_length = Unpack(data, PackLocation{16,8});
-        loop_linker.SetSeed(Unpack(data, PackLocation{24,16}));
-        div_cv_mode = Unpack(data, PackLocation{40,4});
-        down = constrain(Unpack(data, PackLocation{44,6}), 1, 60);
-        up = constrain(Unpack(data, PackLocation{50,6}), down, 60);
-        melo_cv_mode = Unpack(data, PackLocation{56,4});
-        accent_prob = Unpack(data, PackLocation{60,4});
+        loop_length = Unpack(data, PackLocation{16,5});
+        loop_linker.SetSeed(Unpack(data, PackLocation{21,12}));
+        div_cv_mode = Unpack(data, PackLocation{33,3});
+        down = constrain(Unpack(data, PackLocation{36,5}), 1, MAX_MELO_RANGE);
+        up = constrain(Unpack(data, PackLocation{41,5}), down, MAX_MELO_RANGE);
+        melo_cv_mode = Unpack(data, PackLocation{46,3});
+        accent_prob = Unpack(data, PackLocation{49,3});
+        qselect = Unpack(data, PackLocation{52,3});
+        dur_short = Unpack(data, PackLocation{55,3});
+        dur_mid = Unpack(data, PackLocation{58,3});
+        dur_long = Unpack(data, PackLocation{61,3});
         if (loop_length > 0) GenerateDivLoop(false, true);
     }
 
@@ -334,8 +369,8 @@ protected:
         help[HELP_DIGITAL2] = "Reset";
         help[HELP_CV1]      = "Length";
         help[HELP_CV2]      = "Reseed";
-        help[HELP_OUT1]     = "Gate";
-        help[HELP_OUT2]     = "Pitch";
+        help[HELP_OUT1]     = "Pitch";
+        help[HELP_OUT2]     = "Gate";
         help[HELP_EXTRA1]   = "Siggy: Div+Melo";
         help[HELP_EXTRA2]   = "Stochastic Insp";
     }
@@ -352,18 +387,27 @@ private:
     int div_cv_mode;
 
     // ProbMeloD state
-    int8_t weights[12] = {10,10,10,10,10,10,10,10,10,10,10,10};
+    int8_t degree_weights[7] = {7, 3, 3, 5, 5, 3, 3};
     int8_t down, down_mod, up, up_mod;
     uint8_t pitch[2] = {0};
     uint8_t seqloop[2][32];
-    int8_t rotation[2] = {0};
+    uint8_t current_note_degree = 0;
+    uint8_t current_note_semitone = 0;
     int8_t melo_cv_mode = 0;
     bool regen = false;
-    int old_down = 1, old_up = 12;
+    int old_down = 1, old_up = 7;
 
     // Shared
-    uint8_t accent_prob, octave_prob;
-    int accent_cv, octave_cv;
+    uint8_t accent_prob;
+    int accent_cv;
+    int qselect = 0;
+    uint8_t dur_short = 3, dur_mid = 5, dur_long = 2;
+
+    // Output state (TB3PO convention: DAC0=pitch, DAC1=gate)
+    int curr_pitch_cv = 0;
+    int curr_gate_cv = 0;
+    uint32_t gate_off_tick = 0;
+    uint8_t picked_gate_ratio = 4;
 
     // Animation
     int pulse_animation = 0;
@@ -381,7 +425,16 @@ private:
     const int divs[4] = {1, 2, 4, 8};
 
     // === ProbDiv methods ===
-    void FireMelody(int ch) {
+    int PickGateRatio() {
+        int total = dur_short + dur_mid + dur_long;
+        if (total == 0) return 4;  // default: mid
+        int rnd = random(0, total);
+        if (rnd < dur_short) return 1;   // 1/16 gate
+        if (rnd < dur_short + dur_mid) return 4;  // 4/16 gate
+        return 16;  // full cycle gate
+    }
+
+    int FireMelody(int ch) {
         if (loop_linker.IsLooping()) {
             pitch[ch] = seqloop[ch][loop_linker.GetLoopStep()];
         } else {
@@ -391,28 +444,24 @@ private:
         // Accent: probabilistic velocity accent
         bool do_accent = false;
         if (accent_prob > 0) {
-            int rnd = random(0, 16);
+            int rnd = random(0, 8);
             do_accent = (rnd < accent_prob);
         }
 
-        // Octave shift: probabilistic octave up/down
-        int octave_shift = 0;
-        if (octave_prob > 0) {
-            int rnd = random(0, 16);
-            if (rnd < octave_prob) {
-                // Randomly up or down
-                octave_shift = (random(0, 2) == 0) ? 12 : -12;
-            }
-        }
+        // Pick gate duration for this note
+        picked_gate_ratio = PickGateRatio();
 
-        int cv = pitch[ch] + (12 * OC::DAC::kOctaveZero) + octave_shift;
-        Out(ch, cv);
+        // Quantize through global quantizer (like TB3PO)
+        int midi_note = 60 + pitch[ch];
+        midi_note = constrain(midi_note, 0, 127);
+        int quantized_cv = HS::QuantizerLookup(qselect, midi_note);
 
-        // Gate: high for accent, normal otherwise
-        GateOut(ch, true);
-        // Store accent info for MIDI velocity mapping later
+        // Store note info for display
+        current_note_degree = pitch[ch];
+        current_note_semitone = MIDIQuantizer::NoteNumber(quantized_cv) % 12;
+
         accent_cv = do_accent ? 127 : 64;
-        octave_cv = octave_shift;
+        return quantized_cv;
     }
 
     int GetNextWeightedDiv() {
@@ -465,29 +514,6 @@ private:
 
     // === ProbMeloD methods ===
     template <typename T>
-    static uint32_t get_non_neg_mask(T* arr, int n) {
-        uint32_t mask = 0;
-        for (int i = 0; i < n; ++i) {
-            if (arr[i] >= 0) mask |= 1 << i;
-        }
-        return mask;
-    }
-
-    static int semitones_to_degrees(uint32_t scale_mask, int semitones) {
-        semitones = ((semitones % 12) + 12) % 12;
-        semitones -= __builtin_ctz(scale_mask);
-        scale_mask >>= __builtin_ctz(scale_mask);
-        int degrees = 0;
-        while (semitones > 0 && scale_mask) {
-            int rot = __builtin_ctz(scale_mask >> 1) + 1;
-            semitones -= rot;
-            scale_mask >>= rot;
-            degrees++;
-        }
-        return scale_mask ? degrees : 0;
-    }
-
-    template <typename T>
     static void rotate_masked_left(T* arr, uint32_t mask, int n, int r) {
         if (n < 32) mask = mask & ~(~0u << n);
         if (!mask) return;
@@ -507,37 +533,26 @@ private:
         if (m) rotate_masked_left(arr + i, mask >> i, n - i, -m);
     }
 
-    void UpdateRotatedWeights(int8_t* src, int8_t* rot, int semi_rot, int masked_rot) {
-        std::copy(src, src + 12, rot);
-        masked_rot -= semi_rot;
-        uint32_t scale_mask = get_non_neg_mask(rot, 12);
-        int degrees = semitones_to_degrees(scale_mask, masked_rot);
-        rotate_masked_left(rot, scale_mask, 12, -degrees);
-        rotate_masked_left(rot, 0xffff, 12, -semi_rot);
-    }
-
     uint8_t GetNextWeightedPitch() {
         int total_weights = 0;
-        int8_t rotated[12];
-        UpdateRotatedWeights(weights, rotated, rotation[0], rotation[1]);
-        for (int i = down_mod - 1; i < up_mod; ++i) {
-            total_weights += max(0, rotated[i % 12]);
-        }
-        int rnd = random(0, total_weights + 1);
-        for (int i = down_mod - 1; i < up_mod; ++i) {
-            int w = max(0, rotated[i % 12]);
-            if (rnd <= w && w > 0) return i;
-            rnd -= w;
+        int8_t* w = degree_weights;
+        for (int i = 0; i < 7; ++i) total_weights += max(0, (int)w[i]);
+        if (total_weights == 0) return 3;  // default: 4th degree
+        int rnd = random(0, total_weights);
+        for (int i = 0; i < 7; ++i) {
+            int wi = max(0, (int)w[i]);
+            if (rnd < wi && wi > 0) return i;
+            rnd -= wi;
         }
         return 0;
     }
 
     void GenerateMeloLoop() {
         int full_seed = 0;
-        for (int p = 0; p < 12; p++) {
-            full_seed ^= (weights[p] + 1) << p;
+        for (int p = 0; p < 7; p++) {
+            full_seed ^= (degree_weights[p] + 1) << p;
         }
-        full_seed ^= ((up_mod << 6) | down_mod);
+        full_seed ^= (up_mod << 3) | down_mod;
         full_seed |= (loop_linker.GetSeed() << 16);
         randomSeed(full_seed);
         for (int i = 0; i < 32; ++i) {
@@ -545,18 +560,7 @@ private:
             seqloop[1][i] = GetNextWeightedPitch();
         }
     }
-
-    static constexpr uint8_t x_pos[12] = {2, 7, 10, 15, 18, 26, 31, 34, 39, 42, 47, 50};
-    static constexpr uint8_t p_pos[12] = {0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0};
-    static constexpr char n_pos[12] = {'C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'};
-
-    int semitone_cv_in(uint8_t cv_mask) {
-        int out = 0;
-        if (cv_mask & probmelod::CV1) out += SemitoneIn(0);
-        if (cv_mask & probmelod::CV2) out += SemitoneIn(1);
-        return out;
-    }
-
+ 
     // === Display: side-by-side ===
     // Left half (x 0-63): ProbDiv
     // Right half (x 64-127): ProbMeloD
@@ -567,18 +571,41 @@ private:
     }
 
     void DrawDivSide() {
-        // Division weights — left side (or full width in normal mode)
+        // Division weights with rhythmic visualization
         for (int i = 0; i < 4; i++) {
-            int x = 1;
-            int y = 15 + (i * 10);
-            gfxPrint(x, y, "/");
-            gfxPrint(x + 6, y, divs[i]);
-            DrawSlider(x + 14, y, 30, *weights_ptr[i], MAX_WEIGHT, cursor == i);
+            int y = 14 + (i * 11);  // rows at y=14,25,36,47
+
+            // Division label
+            gfxPrint(1, y, "/");
+            gfxPrint(7, y, divs[i]);
+
+            // 8-step rhythm grid — each step is 3px (2px pulse + 1px gap)
+            for (int s = 0; s < 8; s++) {
+                int sx = 17 + (s * 3);
+                bool fires = (s % divs[i] == 0);
+                if (fires) {
+                    gfxRect(sx, y + 2, 2, 4);  // tall thin pulse marker
+                }
+            }
+
+            // Probability bar
+            int bar_x = 46;
+            int bar_w = (*weights_ptr[i] * 12) / MAX_WEIGHT;
+            gfxFrame(bar_x, y + 1, 12, 6);
+            if (bar_w > 0) {
+                gfxRect(bar_x, y + 1, bar_w, 6);
+            }
+
+            // Row highlight when active
+            if (cursor == i) gfxInvert(1, y, 60, 8);
+
+            // Gate activity — brief invert on the label area when this division fires
             if (pulse_animation > 0 && skip_steps == divs[i]) {
-                gfxInvert(x, y, 12, 8);
+                gfxInvert(1, y, 14, 8);
             }
         }
 
+        // Bottom status row
         // Loop indicator
         gfxIcon(4, 55, LOOP_ICON);
         if (reseed_animation > 0) gfxInvert(4, 55, 12, 8);
@@ -587,74 +614,98 @@ private:
         } else {
             gfxPrint(19, 55, loop_length_mod);
         }
-        if (cursor == LOOP_LENGTH) gfxCursor(19, 63, 18);
+        if (cursor == LOOP_LENGTH) gfxCursor(19, 63, 16);
 
-        if (reset_animation > 0) gfxPrint(52, 55, "R");
+        if (reset_animation > 0) gfxPrint(45, 55, "R");
 
-        // Div CV mode indicator
+        // Gate output indicator — active when curr_gate_cv > 0
+        if (curr_gate_cv > 0) {
+            gfxRect(54, 56, 6, 5);
+        }
+
+        // CV mode indicator
         if (cursor == DIV_CV_MODE) {
-            gfxPos(1, 5);
+            gfxPos(1, 4);
             gfxPrint("CV:");
-            gfxPrint(18, 5, div_cv_mode < DIV_CV_LAST ? "L" : "?");
+            gfxPrint(18, 4, div_cv_mode < DIV_CV_LAST ? "L" : "?");
         }
     }
 
     void DrawMeloSide() {
-        // In full-screen mode, right half starts at x=64
-        // In normal mode (page 1), use full width starting at x=0
         int ox = drawing_fullscreen_ ? 64 : 0;
 
-        // Draw note weights as vertical bars
-        int8_t ws[12];
-        if (MELO_ROTATE <= cursor && cursor <= MELO_ROTATE) {
-            std::copy(weights, weights + 12, ws);
-        } else {
-            UpdateRotatedWeights(weights, ws, rotation[0], rotation[1]);
-        }
+        // --- 7-position scale degree wheel (open center) ---
+        static const int8_t kDx[7] = {0, 11, 14, 6, -6, -14, -11};
+        static const int8_t kDy[7] = {-14, -9, 3, 13, 13, 3, -9};
+        static const int8_t kLx[7] = {0, 14, 18, 7, -7, -18, -14};
+        static const int8_t kLy[7] = {-18, -11, 4, 17, 17, 4, -11};
+        static const char* kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
-        for (uint8_t i = 0; i < 12; ++i) {
-            uint8_t xOff = ox + (i * 5);
-            uint8_t yOff = 45;
-            bool unmasked = (ws[i] >= 0);
+        const uint8_t cx = ox + 32;
+        const uint8_t cy = 28;
 
-            if (unmasked) {
-                int bar_h = constrain(ws[i], 0, 10);
-                gfxLine(xOff, yOff - bar_h, xOff + 2, yOff - bar_h);
+        // Rim outline — no spokes, open center
+        gfxCircle(cx, cy, 14);
+
+        // Endpoint dots at each degree position (size = weight proportion)
+        for (uint8_t i = 0; i < 7; ++i) {
+            int w = max(0, (int)degree_weights[i]);
+            if (w > 0) {
+                int ex = cx + (kDx[i] * w / 7);
+                int ey = cy + (kDy[i] * w / 7);
+                // Short anchor line from endpoint toward center (connects dot to wheel)
+                gfxLine(ex, ey, ex - (kDx[i] * w / 28), ey - (kDy[i] * w / 28));
+                gfxRect(ex - 1, ey - 1, 3, 3);
             }
         }
 
-        // Range indicators
-        gfxPrint(ox + 1, 15, "L:");
-        gfxPrint(ox + 15, 15, down_mod);
-        if (cursor == MELO_LOWER) gfxCursor(ox + 15, 23, 12);
+        // Active degree highlight (outline square at spoke endpoint)
+        int act = constrain(current_note_degree, 0, 6);
+        if (degree_weights[act] > 0) {
+            int ax = cx + (kDx[act] * degree_weights[act] / 7);
+            int ay = cy + (kDy[act] * degree_weights[act] / 7);
+            gfxFrame(ax - 2, ay - 2, 5, 5);
+        }
 
-        gfxPrint(ox + 34, 15, "H:");
-        gfxPrint(ox + 48, 15, up_mod);
-        if (cursor == MELO_UPPER) gfxCursor(ox + 48, 23, 12);
+        // Degree number labels (1-7) outside the rim
+        static const char* kDegLabels[7] = {"1", "2", "3", "4", "5", "6", "7"};
+        for (uint8_t i = 0; i < 7; ++i) {
+            int lx = cx + kLx[i];
+            int ly = cy + kLy[i];
+            uint8_t ly2 = (ly >= 44) ? ly - 8 : ly;
+            gfxPrint(lx, ly2, kDegLabels[i]);
+        }
 
-        // CV mode
+        // Note name in center (plain text, no invert box)
+        const char* nn = kNoteNames[current_note_semitone];
+        gfxPrint(cx - 4, cy - 3, nn);
+        // Active degree: show which degree number is firing below the name
+        char deg_str[2] = {(char)('1' + constrain(current_note_degree, 0, 6)), '\0'};
+        gfxPrint(cx - 3, cy + 4, deg_str);
+
+        // --- Status area (all y ≤ 63 safe) ---
+        // Row 1: Quantizer + Accent
+        gfxPrint(ox + 1, 47, "Q");
+        gfxPrint(ox + 7, 47, qselect);
+        gfxPrint(ox + 18, 47, "A");
+        gfxPrint(ox + 24, 47, accent_prob);
+        // Invert highlights instead of gfxCursor (avoids off-screen)
+        if (cursor == QSELECT) gfxInvert(ox + 1, 47, 14, 8);
+        if (cursor == ACCENT_PROB) gfxInvert(ox + 18, 47, 14, 8);
         if (cursor == MELO_CV_MODE) {
-            gfxPos(ox + 1, 5);
-            gfxPrint(probmelod::cv_modes[melo_cv_mode].cv1_label);
-            gfxPos(ox + 32, 5);
-            gfxPrint(probmelod::cv_modes[melo_cv_mode].cv2_label);
-            gfxCursor(ox + 1, 13, 62, "CV");
+            gfxPrint(ox + 36, 47, "CV");
+            gfxInvert(ox + 36, 47, 14, 8);
         }
 
-        // Accent/Octave probability
-        gfxPrint(ox + 1, 55, "A:");
-        gfxPrint(ox + 12, 55, accent_prob);
-        if (cursor == ACCENT_PROB) gfxCursor(ox + 12, 63, 12);
-
-        gfxPrint(ox + 34, 55, "O:");
-        gfxPrint(ox + 45, 55, octave_prob);
-        if (cursor == OCTAVE_PROB) gfxCursor(ox + 45, 63, 12);
-
-        // Note indicators
-        ForEachChannel(ch) {
-            int note = pitch[ch] % 12;
-            uint8_t xOff = ox + (note * 5) + 1;
-            gfxIcon(xOff, 59, ch ? UP_TRI_R_HALF : UP_TRI_L_HALF);
-        }
+        // Row 2: Duration weights
+        gfxPrint(ox + 1, 55, "S");
+        gfxPrint(ox + 7, 55, dur_short);
+        gfxPrint(ox + 15, 55, "M");
+        gfxPrint(ox + 21, 55, dur_mid);
+        gfxPrint(ox + 29, 55, "L");
+        gfxPrint(ox + 35, 55, dur_long);
+        if (cursor == DUR_SHORT) gfxInvert(ox + 1, 55, 14, 8);
+        if (cursor == DUR_MID) gfxInvert(ox + 15, 55, 14, 8);
+        if (cursor == DUR_LONG) gfxInvert(ox + 29, 55, 14, 8);
     }
 };

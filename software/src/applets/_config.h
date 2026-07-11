@@ -206,7 +206,6 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
     , DeclareApplet<Ponglet, 99, CAT_OTHER>
     , DeclareApplet<ProbabilityDivider, 59, CAT_CLOCKING>
     , DeclareApplet<ProbabilityMelody, 62, CAT_CLOCKING>
-    , DeclareApplet<Siggy, 100, CAT_CLOCKING | CAT_MODULATOR>
     , DeclareApplet<Relabi, 89, CAT_MODULATOR>
     , DeclareApplet<ResetClock, 70, CAT_UTILITY | CAT_CLOCKING>
     , DeclareApplet<RndWalk, 69, CAT_MODULATOR>
@@ -223,7 +222,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
 #endif
     , DeclareApplet<Shredder, 58, CAT_MODULATOR>
     , DeclareApplet<Shuffle, 36, CAT_CLOCKING>
-    //, DeclareApplet<Siggy, 113, CAT_SEQUENCER>
+    , DeclareApplet<Siggy, 100, CAT_CLOCKING | CAT_MODULATOR>
     , DeclareApplet<Slew, 19, CAT_MODULATOR>
     , DeclareApplet<Squanch, 46, CAT_QUANTIZER>
     , DeclareApplet<Stairs, 61, CAT_MODULATOR>
