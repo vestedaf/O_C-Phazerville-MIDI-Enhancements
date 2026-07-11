@@ -1,7 +1,12 @@
 name: PlatformIO CI
 
-on:
+"on":
   push:
+    branches:
+      - '**'
+    paths:
+      - 'software/**'
+  pull_request:
     paths:
       - 'software/**'
 
@@ -13,37 +18,48 @@ jobs:
     - uses: actions/checkout@v6
       with:
         submodules: recursive
-
-    - name: Setup env
-      run: |
-        echo "OC_ARTIFACT_TAG=${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)" | tr '/' '_' >> $GITHUB_ENV
+        fetch-depth: 1
 
     - name: Cache PlatformIO
       uses: actions/cache@v5
       with:
-        path: ~/.platformio
-        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+        path: |
+          ~/.platformio
+          ~/.cache/pip
+        key: ${{ runner.os }}-pio-${{ hashFiles('software/platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pio-
 
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
         python-version: '3.x'
-        cache: 'pip'
-        cache-dependency-path: '**/requirements.txt'
 
-    - run: |
-        pip3 install --upgrade pip
-        pip3 install -r .github/workflows/requirements.txt
-
-    - name: Build firmware
-      working-directory: software/
+    - name: Install PlatformIO
       run: |
-        pio run
+        pip3 install --upgrade pip
+        pip3 install platformio
 
-    - name: Copy artifact
+    - name: Build T41 (Slot A)
+      working-directory: software/
+      run: pio run -e T41
+
+    - name: Build T41_audio (Slot B)
+      working-directory: software/
+      run: pio run -e T41_audio
+
+    - name: Build T41_MTP (Slot X) — stitches multiboot via assemble-multiboot.py
+      working-directory: software/
+      run: pio run -e T41_MTP
+
+    - name: Build remaining environments (T40, nlm_cardoc_T40)
+      working-directory: software/
+      run: pio run -e T40 -e nlm_cardoc_T40
+
+    - name: Upload firmware artifacts
       uses: actions/upload-artifact@v7
       with:
-        name: o_C-${{env.OC_ARTIFACT_TAG}}
+        name: o_C-${{ github.ref_name }}-${{ github.sha }}
         include-hidden-files: true
         path: |
           software/*.hex

@@ -1,6 +1,6 @@
 name: Custom Build
 
-on:
+"on":
   discussion_comment:
     types: [created]
 
@@ -25,8 +25,12 @@ jobs:
     - name: Cache PlatformIO
       uses: actions/cache@v5
       with:
-        path: ~/.platformio
-        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+        path: |
+          ~/.platformio
+          ~/.cache/pip
+        key: ${{ runner.os }}-pio-${{ hashFiles('software/platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pio-
 
     - name: Set up Python
       uses: actions/setup-python@v6
