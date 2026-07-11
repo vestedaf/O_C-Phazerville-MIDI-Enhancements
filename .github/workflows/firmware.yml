@@ -53,10 +53,13 @@ jobs:
       working-directory: software/
       run: pio run -e T40 -e nlm_cardoc_T40
 
+    - name: Set artifact name
+      run: echo "OC_ARTIFACT_NAME=o_C-$(echo '${{ github.ref_name }}' | tr '/' '-')-${{ github.sha_short }}" >> $GITHUB_ENV
+
     - name: Upload firmware artifacts
       uses: actions/upload-artifact@v7
       with:
-        name: o_C-${{ github.ref_name }}-${{ github.sha }}
+        name: ${{ env.OC_ARTIFACT_NAME }}
         include-hidden-files: true
         path: |
           software/*.hex
