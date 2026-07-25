@@ -1,3 +1,6 @@
 .DS_Store
 software/.pio/
 *.bak
+*.hex
+*.bin
+software/src/src.ino.cpp
