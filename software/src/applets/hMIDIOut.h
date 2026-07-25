@@ -63,160 +63,12 @@ public:
     }
 
     void Controller() {
-        ForEachChannel(ch) {
-            int midx = map_index[ch];
-            MIDIMapping &map = frame.MIDIState.outmap[midx];
-            if (!map.enabled()) continue;
-
-            int dac_ch = map.get_voice();
-            if (dac_ch < 0 || dac_ch >= IO_CHANNEL_COUNT) continue;
-            int cv = frame.ViewOut(dac_ch);
-            uint8_t ch_num = map.get_channel();
-
-            switch (map.get_type()) {
-              case MIDIMapSettings::NONE:
-                break;
-
-              case MIDIMapSettings::PITCH: {
-                // Note output with gate source (mirrors 1.xx SendFlexibleMIDIOut)
-                const int8_t gs = map.get_gate_source();
-                uint8_t note = MIDIQuantizer::NoteNumber(cv, map.get_transpose());
-                uint8_t last = last_note[ch];
-
-                int gate_cv = frame.ViewOut(gs);
-                bool gate_now = gate_cv > (12 << 7);
-                bool gate_was = last_gate[ch];
-
-                if (gate_now && !gate_was) {
-                  if (last != 0) frame.MIDIState.SendNoteOff(ch_num, last, 0);
-                  frame.MIDIState.SendNoteOn(ch_num, note, 0x64);
-                  UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
-                  last_note[ch] = note;
-                  last_gate[ch] = true;
-                  last_tick[ch] = OC::CORE::ticks;
-                } else if (gate_now && gate_was && note != last) {
-                  // Legato: pitch changed while gate held
-                  frame.MIDIState.SendNoteOff(ch_num, last, 0);
-                  frame.MIDIState.SendNoteOn(ch_num, note, 0x64);
-                  UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
-                  last_note[ch] = note;
-                  last_tick[ch] = OC::CORE::ticks;
-                } else if (!gate_now && gate_was) {
-                  frame.MIDIState.SendNoteOff(ch_num, last, 0);
-                  UpdateLog(HEM_MIDI_NOTE_OFF, last, 0);
-                  last_note[ch] = 0;
-                  last_gate[ch] = false;
-                  last_tick[ch] = OC::CORE::ticks;
-                }
-                break;
-              }
-
-              case MIDIMapSettings::GATE: {
-                // Gate output: note on/off based on gate source threshold
-                // Fixed note from user's drum selection — no CV pitch derivation
-                int8_t gs = map.get_gate_source();
-                int gate_cv = (gs >= 0 && gs < IO_CHANNEL_COUNT) ? frame.ViewOut(gs) : 0;
-                bool gate = (gate_cv > HEMISPHERE_CHANGE_THRESHOLD * 3);
-                if (gate && !last_gate[ch]) {
-                    uint8_t note = map.GetDrumNote();
-                    frame.MIDIState.SendNoteOn(ch_num, note, 0x64);
-                    last_note[ch] = note;
-                    UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
-                    last_tick[ch] = OC::CORE::ticks;
-                } else if (!gate && last_gate[ch]) {
-                    frame.MIDIState.SendNoteOff(ch_num, last_note[ch], 0);
-                    UpdateLog(HEM_MIDI_NOTE_OFF, last_note[ch], 0);
-                    last_tick[ch] = OC::CORE::ticks;
-                }
-                last_gate[ch] = gate;
-                break;
-              }
-
-              case MIDIMapSettings::TRIGGER: {
-                // Trigger: short note on gate rising edge
-                bool gate = (cv > HEMISPHERE_CHANGE_THRESHOLD * 3);
-                if (gate && !last_gate[ch]) {
-                    uint8_t note = MIDIQuantizer::NoteNumber(cv, map.get_transpose());
-                    frame.MIDIState.SendNoteOn(ch_num, note, 0x64);
-                    last_note[ch] = note;
-                    trig_countdown[ch] = 100;
-                    UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
-                    last_tick[ch] = OC::CORE::ticks;
-                }
-                if (trig_countdown[ch] > 0) {
-                    if (--trig_countdown[ch] == 0) {
-                        frame.MIDIState.SendNoteOff(ch_num, last_note[ch], 0);
-                        UpdateLog(HEM_MIDI_NOTE_OFF, last_note[ch], 0);
-                    }
-                }
-                last_gate[ch] = gate;
-                break;
-              }
-
-              case MIDIMapSettings::MODULATOR: {
-                // Modulator: send velocity, aftertouch, pitch bend, or CC#
-                int value = ProportionCV(cv, 127, HEMISPHERE_MAX_CV);
-                if (map.get_subtype() <= MIDIMapSettings::MOD_BEND) {
-                  switch (map.get_subtype()) {
-                    case MIDIMapSettings::MOD_VEL_MONO:
-                      // Velocity stored for note-on
-                      last_velocity[ch] = value;
-                      break;
-                    case MIDIMapSettings::MOD_AT_CHAN:
-                      if (value != last_at[ch]) {
-                        frame.MIDIState.SendAfterTouch(ch_num, value);
-                        last_at[ch] = value;
-                        UpdateLog(HEM_MIDI_AFTERTOUCH_CHANNEL, value, 0);
-                        last_tick[ch] = OC::CORE::ticks;
-                      }
-                      break;
-                    case MIDIMapSettings::MOD_BEND: {
-                      uint16_t bend = Proportion(cv + HEMISPHERE_3V_CV, HEMISPHERE_3V_CV * 2, 16383);
-                      bend = constrain(bend, 0, 16383);
-                      if (bend != last_bend[ch]) {
-                        frame.MIDIState.SendPitchBend(ch_num, bend);
-                        last_bend[ch] = bend;
-                        UpdateLog(HEM_MIDI_PITCHBEND, bend - 8192, 0);
-                        last_tick[ch] = OC::CORE::ticks;
-                      }
-                      break;
-                    }
-                    default: break;
-                  }
-                } else {
-                  // CC# mode: subtype 5-132 = CC# 0-127
-                  uint8_t cc_num = map.get_subtype() - (MIDIMapSettings::MOD_BEND + 1);
-                  if (value != last_cc[ch]) {
-                    frame.MIDIState.SendCC(ch_num, cc_num, value);
-                    last_cc[ch] = value;
-                    UpdateLog(HEM_MIDI_CC, cc_num, value);
-                    last_tick[ch] = OC::CORE::ticks;
-                  }
-                }
-                break;
-              }
-
-              case MIDIMapSettings::CCONTROL: {
-                // Legacy CC output (in-maps only)
-                int value = ProportionCV(cv, 127, HEMISPHERE_MAX_CV);
-                uint8_t cc_num = map.get_subtype();
-                if (value != last_cc[ch]) {
-                    frame.MIDIState.SendCC(ch_num, cc_num, value);
-                    last_cc[ch] = value;
-                    UpdateLog(HEM_MIDI_CC, cc_num, value);
-                    last_tick[ch] = OC::CORE::ticks;
-                }
-                break;
-              }
-
-              case MIDIMapSettings::PIPE:
-                // PIPE processing is handled in IOFrame::Send(), not here
-                // This applet just displays the mapping state
-                break;
-
-              default: break;
-            }
-        }
+        // All out-map processing (PITCH/GATE/TRIGGER/MODULATOR/CCONTROL/PIPE) happens
+        // once per frame in IOFrame::Send(), for every out-map slot, regardless of
+        // which applet (if any) currently occupies a hemisphere. This applet only
+        // displays the state of its two assigned map slots; it must not also send,
+        // or every message would go out twice with a different (and looser) gate
+        // threshold, causing duplicate/stuck notes. (See HSIOFrame.cpp: MIDIFrame::Send)
     }
 
     void View() {
@@ -339,20 +191,6 @@ private:
     int map_index[2] = {0, 1};
     int io_page = 0;
     int last_icon_ticks[2];
-
-    // Per-channel state
-    uint8_t last_note[2] = {0, 0};
-    uint8_t last_velocity[2] = {0x64, 0x64};
-    uint8_t last_cc[2] = {0, 0};
-    uint8_t last_at[2] = {0, 0};
-    uint16_t last_bend[2] = {8192, 8192};
-    bool last_gate[2] = {false, false};
-    uint32_t last_tick[2] = {0, 0};
-    uint16_t trig_countdown[2] = {0, 0};
-
-    // Logging
-    MIDIMessage log[7];
-    int log_index;
 
     void DrawMonitor() {
         if ((OC::CORE::ticks - frame.MIDIState.last_msg_tick) < 100) {
@@ -522,14 +360,6 @@ private:
         }
     }
 
-    void UpdateLog(uint8_t msg, uint8_t data1, uint8_t data2) {
-        if (log_index < 7) {
-            log[log_index].message = msg;
-            log[log_index].data1 = data1;
-            log[log_index].data2 = data2;
-            log_index++;
-        }
-    }
 };
 
 #endif

@@ -913,6 +913,7 @@ struct MIDIFrame {
     uint8_t current_note[17]; // note number, per MIDI channel (index 16 = Omni)
     uint8_t current_note_map[MIDIMAP_MAX]; // note number, per map slot (for PITCH with gate_source)
     uint8_t current_ccval[IO_CHANNEL_COUNT]; // level 0 - 127, per output channel
+    uint16_t trig_countdown[MIDIMAP_MAX]; // per out-map TRIGGER note-off countdown
     int note_countdown[IO_CHANNEL_COUNT];
     int last_cv[IO_CHANNEL_COUNT]; // for change detection on any output channel
     bool clocked[IO_CHANNEL_COUNT];

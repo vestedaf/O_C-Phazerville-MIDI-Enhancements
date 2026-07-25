@@ -388,15 +388,18 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
 
             if (gate_now && !gate_was) {
               SendNoteOn(midi_ch, note);
+              UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
               current_note_map[i] = note;
               outchan_last[i] = midi_ch;
             } else if (gate_now && gate_was && note != last) {
               // Legato: pitch changed while gate held
               SendNoteOff(midi_ch, last);
               SendNoteOn(midi_ch, note);
+              UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
               current_note_map[i] = note;
             } else if (!gate_now && gate_was) {
               SendNoteOff(midi_ch, last);
+              UpdateLog(HEM_MIDI_NOTE_OFF, last, 0);
               current_note_map[i] = 0;
             }
             break;
@@ -418,10 +421,32 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
             uint8_t drum_note = om.GetDrumNote();
             if (gate_now && !drum_was) {
               SendNoteOn(midi_ch, drum_note);
+              UpdateLog(HEM_MIDI_NOTE_ON, drum_note, 0x64);
               current_note_map[i] = drum_note;
             } else if (!gate_now && drum_was) {
               SendNoteOff(midi_ch, drum_note);
+              UpdateLog(HEM_MIDI_NOTE_OFF, drum_note, 0);
               current_note_map[i] = 0;
+            }
+            break;
+          }
+
+          case MIDIMapSettings::TRIGGER: {
+            // Trigger: short note on gate rising edge, fixed duration
+            bool drum_was = (current_note_map[i] != 0);
+            if (gate && !drum_was) {
+              uint8_t note = MIDIQuantizer::NoteNumber(input, om.get_transpose());
+              SendNoteOn(midi_ch, note);
+              UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
+              current_note_map[i] = note;
+              trig_countdown[i] = 100;
+            }
+            if (trig_countdown[i] > 0) {
+              if (--trig_countdown[i] == 0) {
+                SendNoteOff(midi_ch, current_note_map[i]);
+                UpdateLog(HEM_MIDI_NOTE_OFF, current_note_map[i], 0);
+                current_note_map[i] = 0;
+              }
             }
             break;
           }
@@ -430,6 +455,7 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
             const uint8_t newccval = ProportionCV(abs(input), 127);
             if (newccval != current_ccval[i]) {
               SendCC(midi_ch, om.get_subtype(), newccval);
+              UpdateLog(HEM_MIDI_CC, om.get_subtype(), newccval);
               current_ccval[i] = newccval;
             }
             break;
@@ -445,11 +471,13 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
                   break;
                 case HS::MIDIMapSettings::MOD_AT_CHAN:
                   SendAfterTouch(midi_ch, val);
+                  UpdateLog(HEM_MIDI_AFTERTOUCH_CHANNEL, val, 0);
                   break;
                 case HS::MIDIMapSettings::MOD_BEND: {
                   uint16_t bend = Proportion(input + HEMISPHERE_3V_CV, HEMISPHERE_3V_CV * 2, 16383);
                   bend = constrain(bend, 0, 16383);
                   SendPitchBend(midi_ch, bend);
+                  UpdateLog(HEM_MIDI_PITCHBEND, bend - 8192, 0);
                   break;
                 }
                 default: break;
@@ -459,6 +487,7 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
               const uint8_t cc_num = om.get_subtype() - (HS::MIDIMapSettings::MOD_BEND + 1);
               if (val != current_ccval[i]) {
                 SendCC(midi_ch, cc_num, val);
+                UpdateLog(HEM_MIDI_CC, cc_num, val);
                 current_ccval[i] = val;
               }
             }
@@ -473,16 +502,19 @@ void HS::MIDIFrame::Send(const SlewedValue *outvals) {
             if (gate && (last == 0)) {
               // Note on
               SendNoteOn(midi_ch, note);
+              UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
               current_note_map[i] = note;
               outchan_last[i] = midi_ch;
             } else if (gate && (note != last)) {
               // Legato: pitch changed while gate held
               SendNoteOff(midi_ch, last);
               SendNoteOn(midi_ch, note);
+              UpdateLog(HEM_MIDI_NOTE_ON, note, 0x64);
               current_note_map[i] = note;
             } else if (!gate && (last != 0)) {
               // Note off
               SendNoteOff(midi_ch, last);
+              UpdateLog(HEM_MIDI_NOTE_OFF, last, 0);
               current_note_map[i] = 0;
             }
             break;
