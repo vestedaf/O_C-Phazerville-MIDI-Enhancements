@@ -195,8 +195,8 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
 #ifdef __IMXRT1062__
     , DeclareApplet<MidiLoop, 81, CAT_MIDI>
 #endif
-    , DeclareApplet<hMIDIIn, 150, CAT_MIDI>
-    , DeclareApplet<hMIDIOut, 27, CAT_MIDI>
+    // , DeclareApplet<hMIDIIn, 150, CAT_MIDI>
+    // , DeclareApplet<hMIDIOut, 27, CAT_MIDI>
 #ifdef PEWPEWPEW
     , DeclareApplet<MultiScale, 73, CAT_QUANTIZER>
 #endif
