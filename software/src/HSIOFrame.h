@@ -654,6 +654,7 @@ constexpr MIDIMapping& pack(MIDIMapping& input) {
 struct MIDIFrame {
     MIDIMapping mapping[MIDIMAP_MAX];
     MIDIMapping outmap[MIDIMAP_MAX];
+    int8_t direct_output[MIDIMAP_MAX]; // per IN-map: physical/virtual output channel to write ViewOut() to directly, -1 = none
 
     uint32_t last_msg_tick; // Tick of last received message
     uint16_t sustain_latch; // each bit is a MIDI channel's sustain state
@@ -685,6 +686,7 @@ struct MIDIFrame {
       for (int ch = 0; ch < MIDIMAP_MAX; ++ch) {
         mapping[ch].Init();
         mapping[ch].AdjustVoice(ch / 2 % DAC_CHANNEL_COUNT); // each quad is a unique voice
+        direct_output[ch] = -1; // no direct physical output by default
       }
       for (int ch = 0; ch < MIDIMAP_MAX; ++ch) {
         outmap[ch].Init();

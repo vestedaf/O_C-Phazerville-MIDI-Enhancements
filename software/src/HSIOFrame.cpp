@@ -617,6 +617,19 @@ void HS::IOFrame::Send(OC::IOFrame *ioframe) {
       DAC_CHANNEL_E, DAC_CHANNEL_F, DAC_CHANNEL_G, DAC_CHANNEL_H,
 #endif
     };
+
+    // IN-maps with a direct physical output assignment write straight to
+    // outputs[], regardless of what applet (if any) occupies a hemisphere
+    // slot — mirrors how out-maps are handled globally by MIDIState.Send().
+    for (int i = 0; i < MIDIMAP_MAX; ++i) {
+      const int8_t ch = MIDIState.direct_output[i];
+      // -1 = disabled. Upper bound is a hard safety check: Out() indexes
+      // outputs[IO_CHANNEL_COUNT] unguarded, so a stale/corrupt preset value
+      // would otherwise cause an OOB write (hard fault).
+      if (ch < 0 || ch >= IO_CHANNEL_COUNT) continue;
+      Out(ch, MIDIState.mapping[i].ViewOut());
+    }
+
     for (int i = 0; i < IO_CHANNEL_COUNT; ++i) {
 
       /*

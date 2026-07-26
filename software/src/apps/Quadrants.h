@@ -158,6 +158,11 @@ public:
         // avoid collision with MIDI out-maps at 182-213)
         Q_ENGINE_KEY    = 230, // + slot number (230 - 237)
 
+        // 32 int8_t packed 8-per-key = 4 keys (238-241).
+        // MUST stay below 256: the Audio subapp shares this key space and
+        // uses preset_key|256 for MAIN/STEREO_MODE_FLAGS (see AudioAppletSubapp::key()).
+        MIDI_INMAP_DIRECT_OUT_KEY = 238, // + 0..3
+
         // 300-428 = Sequences (aka Patterns)
         SEQUENCES_KEY   = 300, // + blob index
 
@@ -287,6 +292,15 @@ public:
         for (size_t midx = 0; midx < MIDIMAP_MAX; ++midx) {
           data = PackPackables(frame.MIDIState.outmap[midx]);
           PhzConfig::setValue(MIDI_MAPS_KEY + MIDIMAP_MAX + midx, data);
+        }
+        // IN-map direct output assignments, packed 8 per key
+        for (size_t blob = 0; blob < (MIDIMAP_MAX + 7) / 8; ++blob) {
+          data = 0;
+          for (size_t k = 0; k < 8 && (blob * 8 + k) < MIDIMAP_MAX; ++k) {
+            Pack(data, PackLocation{k * 8, 8},
+                 (uint8_t)frame.MIDIState.direct_output[blob * 8 + k]);
+          }
+          PhzConfig::setValue(MIDI_INMAP_DIRECT_OUT_KEY + blob, data);
         }
 
         // User Patterns aka Sequences
@@ -457,6 +471,16 @@ public:
           if (!PhzConfig::getValue(MIDI_MAPS_KEY + MIDIMAP_MAX + midx, data))
               continue;
           UnpackPackables(data, frame.MIDIState.outmap[midx]);
+        }
+        for (size_t blob = 0; blob < (MIDIMAP_MAX + 7) / 8; ++blob) {
+          if (!PhzConfig::getValue(MIDI_INMAP_DIRECT_OUT_KEY + blob, data))
+              continue; // old preset without this key: direct_output[] stays at Init() default (-1)
+          for (size_t k = 0; k < 8 && (blob * 8 + k) < MIDIMAP_MAX; ++k) {
+            const int8_t v = (int8_t)Unpack(data, PackLocation{k * 8, 8});
+            // clamp for safety — Send() indexes outputs[] with this
+            frame.MIDIState.direct_output[blob * 8 + k] =
+                constrain(v, -1, IO_CHANNEL_COUNT - 1);
+          }
         }
         frame.MIDIState.UpdateMidiChannelFilter();
         frame.MIDIState.UpdateMaxPolyphony();

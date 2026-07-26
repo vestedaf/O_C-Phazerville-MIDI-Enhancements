@@ -257,6 +257,7 @@ namespace HS {
     TRANSPOSE,
     RANGELOW,
     RANGEHIGH,
+    DIRECTOUT, // IN-maps only: direct physical output assignment
 
     MEDITCURSOR_COUNT
   };
@@ -270,14 +271,22 @@ namespace HS {
       // Skip invalid edit positions
       if (mview_is_output && map.get_type() == MIDIMapSettings::GATE) {
         // GATE out map only has: CHANNEL(1), MODE(2), GATESOURCE(4=Gate), TRANSPOSE(5=Note)
-        // Never land on VOICE(3), RANGELOW(6), RANGEHIGH(7) — no Source/Voice field.
+        // Never land on VOICE(3), RANGELOW(6), RANGEHIGH(7), DIRECTOUT(8) — no Source/Voice/Output field.
         if (midi_edit == 3)
           midi_edit = (dir > 0) ? 4 : 2;  // skip Voice
-        else if (midi_edit == 6 || midi_edit == 7)
-          midi_edit = (dir > 0) ? 1 : 5;  // skip range, wrap forward to Ch
+        else if (midi_edit >= 6)
+          midi_edit = (dir > 0) ? 1 : 5;  // skip range/direct-out, wrap forward to Ch
+      } else if (mview_is_output && map.get_type() != MIDIMapSettings::PITCH) {
+        // Out-map TRIGGER, MODULATOR, CCONTROL: only CHANNEL(1), MODE(2), VOICE(3)
+        if (midi_edit >= 4) midi_edit = (dir > 0) ? 1 : 3;
+      } else if (mview_is_output) {
+        // Out-map PITCH: CHANNEL/MODE/VOICE/GATESOURCE/TRANSPOSE/RANGELOW/RANGEHIGH.
+        // DIRECTOUT is IN-map only.
+        if (midi_edit == 8) midi_edit = (dir > 0) ? 1 : 7;
       } else if (map.get_type() != MIDIMapSettings::PITCH) {
-        // TRIGGER, MODULATOR, CCONTROL: only CHANNEL(1), MODE(2), VOICE(3)
-        if (midi_edit >= 4) midi_edit = 3;
+        // IN-map, non-PITCH type (Drum/Trigger/Modulator/CCONTROL):
+        // CHANNEL(1), MODE(2), VOICE(3), DIRECTOUT(8)
+        if (midi_edit >= 4 && midi_edit <= 7) midi_edit = (dir > 0) ? 8 : 3;
       }
       // IN MAPS skip GATESOURCE(4)
       if (!mview_is_output && midi_edit == 4)
@@ -317,6 +326,11 @@ namespace HS {
         case 7: // high
           map.AdjustRangeHigh(dir);
           break;
+        case 8: { // direct physical output (IN-maps only)
+          int8_t &dout = frame.MIDIState.direct_output[mview];
+          dout = constrain(dout + dir, -1, IO_CHANNEL_COUNT - 1);
+          break;
+        }
       }
     }
   }
@@ -667,6 +681,13 @@ namespace HS {
               case 5: gfxPrint("T:"); x_arrow = graphics.getPrintPosX(); { int t = map.get_transpose(); if (t > 0) gfxPrint("+"); gfxPrint(t); } break;
               case 6: gfxPrint("<"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
               case 7: gfxPrint("<"); gfxPrint(midi_note_numbers[constrain(map.get_low(), 0, 127)]); gfxPrint("-"); x_arrow = graphics.getPrintPosX(); gfxPrint(midi_note_numbers[constrain(map.get_high(), 0, 127)]); gfxPrint(">"); break;
+              case 8: {
+                gfxPrint("Out:"); x_arrow = graphics.getPrintPosX();
+                int8_t dout = frame.MIDIState.direct_output[mview];
+                if (dout < 0) gfxPrint("None");
+                else gfxPrint(map.GetOutputName(dout));
+                break;
+              }
             }
           }
         }
